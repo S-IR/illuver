@@ -7,7 +7,7 @@ ChunkWorkerState :: struct {
 	visiblePoints: [MAX_POINTS][3]f32,
 	indices:       [MAX_INDICES]INDEX_TYPE_USED_IN_CHUNKS,
 	colors:        [MAX_COLORS][4]f32,
-	vertexMapper:  [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]Maybe(int),
+	vertexMapper:  [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]Maybe(INDEX_TYPE_USED_IN_CHUNKS),
 	heightMap:     [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]i32,
 }
 chunkWorkerStates: [dynamic]ChunkWorkerState
@@ -26,7 +26,7 @@ chunkJobSema: sync.Sema
 chunkShutdown: b32
 
 chunk_worker_thread :: proc(t: ^thread.Thread) {
-	workerIdx := (cast(^int)t.data)^
+	workerIdx := ((^int)(t.data))^
 	state := &chunkWorkerStates[workerIdx]
 
 	for {

@@ -229,7 +229,7 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 				pRasterizationState = &vk.PipelineRasterizationStateCreateInfo {
 					sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 					lineWidth = 1.0,
-					cullMode = {.BACK},
+					cullMode = {},
 					frontFace = .CLOCKWISE,
 				},
 				pMultisampleState = &vk.PipelineMultisampleStateCreateInfo {
@@ -320,3 +320,8 @@ pipeline_data_delete :: proc(p: PipelineData) {
 
 // 	return visibles
 // }
+
+triangle_decide_color :: proc(points: [3]PointType, colors: [3][4]f32) -> [4]f32 {
+	for p in points do assert(p != .Air)
+	return colors[0]
+}

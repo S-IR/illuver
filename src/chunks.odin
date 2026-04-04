@@ -90,7 +90,7 @@ chunks_init :: proc(c: ^Camera) {
 		idx^ = i
 		t = thread.create(chunk_worker_thread)
 		t.data = idx
-		thread.start(t) // started once, runs forever until shutdown
+		thread.start(t)
 	}
 
 
@@ -453,11 +453,8 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		}
 
 
-		staticVisiblePointsLen: int = 0
-
-
+		staticVisiblePointsLen: INDEX_TYPE_USED_IN_CHUNKS = 0
 		staticIndicesLen: int = 0
-
 		staticColorsLen: int = 0
 
 
@@ -515,7 +512,26 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 			}
 
 		}
+		// for &h in state.heightMap do h = MAX_Y - 1
+		// {
 
+		// 	for dz: i32 = 0; dz < VERTS_PER_Z_DIR - 1; dz += 2 {
+		// 		// state.heightMap[0 * VERTS_PER_Z_DIR + dz] = MAX_Y - 1
+		// 		startingIdx := [3]i32{0, 0 + (MAX_Y - MIN_Y) / 2, dz}
+		// 		chunk.points[index_into_point_arrays(startingIdx + cubeVertices[0])] = .LightPurpleGround
+		// 		chunk.points[index_into_point_arrays(startingIdx + cubeVertices[1])] = .LightPurpleGround
+		// 		chunk.points[index_into_point_arrays(startingIdx + cubeVertices[2])] = .LightPurpleGround
+		// 		chunk.points[index_into_point_arrays(startingIdx + cubeVertices[3])] = .LightPurpleGround
+		// 		chunk.points[index_into_point_arrays(startingIdx + cubeVertices[5])] = .LightPurpleGround
+		// 		chunk.points[index_into_point_arrays(startingIdx + cubeVertices[7])] = .LightPurpleGround
+
+		// 		// chunk.points[index_into_point_arrays(0, 0 + (MAX_Y - MIN_Y) / 2, dz + 1)] = .LightPurpleGround
+		// 		// chunk.points[index_into_point_arrays(1, 0 + (MAX_Y - MIN_Y) / 2, dz + 1)] = .LightPurpleGround
+
+
+		// 	}
+
+		// }
 		{
 			tracy.Zone()
 
@@ -541,28 +557,29 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 					isEdgeZ := z == 0 || z == VERTS_PER_Z_DIR - 2
 					worldZ := pos[1] + z
-					#no_bounds_check height := state.heightMap[x * VERTS_PER_Z_DIR + z]
+					height := state.heightMap[x * VERTS_PER_Z_DIR + z]
 
 
 					for y: i32 = 0; y < height - MIN_Y; y += 1 {
 						baseIndex := x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
-						#no_bounds_check pointType := points[baseIndex]
+						pointType := points[baseIndex]
 						if pointType == .Air do continue
 
 						isEdgeY := y == 0 || y == height - MIN_Y - 1
 						isChunkEdge := isEdgeX || isEdgeY || isEdgeZ
 						yCoord := y + MIN_Y
-
-						pointTypeSimd := #simd[8]u16 {
-							u16(pointType),
-							u16(pointType),
-							u16(pointType),
-							u16(pointType),
-							u16(pointType),
-							u16(pointType),
-							u16(pointType),
-							u16(pointType),
-						}
+						base := [3]i32{x, y, z}
+						worldBase := [3]i32{worldX, yCoord, worldZ}
+						// pointTypeSimd := #simd[8]u16 {
+						// 	u16(pointType),
+						// 	u16(pointType),
+						// 	u16(pointType),
+						// 	u16(pointType),
+						// 	u16(pointType),
+						// 	u16(pointType),
+						// 	u16(pointType),
+						// 	u16(pointType),
+						// }
 						if !isChunkEdge {
 							isSurrounded := true
 							for p in pointsSimdNeighbors {
@@ -581,141 +598,106 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 						}
 
+						oneZeroZero := get_point_type(base, {1, 0, 0}, chunk.points[:])
+						oneOneZero := get_point_type(base, {1, 1, 0}, chunk.points[:])
+						zeroOneZero := get_point_type(base, {0, 1, 0}, chunk.points[:])
 
-						cornerIndices: #simd[8]i32
-						cornerArrayIndexes := baseIndex + cubeVertexLinearOffsets
-						cornersArrayPointTypes := #simd[8]u16 {
-							auto_cast points[simd.extract(cornerArrayIndexes, 0)],
-							auto_cast points[simd.extract(cornerArrayIndexes, 1)],
-							auto_cast points[simd.extract(cornerArrayIndexes, 2)],
-							auto_cast points[simd.extract(cornerArrayIndexes, 3)],
-							auto_cast points[simd.extract(cornerArrayIndexes, 4)],
-							auto_cast points[simd.extract(cornerArrayIndexes, 5)],
-							auto_cast points[simd.extract(cornerArrayIndexes, 6)],
-							auto_cast points[simd.extract(cornerArrayIndexes, 7)],
+						zeroZeroOne := get_point_type(base, {0, 0, 1}, chunk.points[:])
+						zeroOneOne := get_point_type(base, {0, 1, 1}, chunk.points[:])
+
+						oneZeroOne := get_point_type(base, {1, 0, 1}, chunk.points[:])
+
+						PointTypePlusOffset :: struct {
+							t: PointType,
+							o: [3]i32,
 						}
-						eqMask := simd.lanes_eq(cornersArrayPointTypes, pointTypeSimd)
-						// sum := simd.reduce_add_ordered(eqMask)
-
-						marchingCubeIndex: uint = 0
-						validCorners := 0
-						for localVert: u8 = 0; localVert < 8; localVert += 1 {
-							laneMatch := simd.extract(eqMask, localVert)
-							if laneMatch == 0 do continue
-							validCorners += 1
-							marchingCubeIndex |= 1 << localVert
-							vertIndex := simd.extract(cornerArrayIndexes, localVert)
-							#no_bounds_check existingVulkanIndex := mapper[vertIndex]
-
-							if existingVulkanIndex == nil {
-
-								#no_bounds_check offset := cubeVertices[localVert]
-
-								coordWithoutJitter := [3]i32 {
-									worldX + offset.x,
-									yCoord + offset.y,
-									worldZ + offset.z,
-								}
-								finalPointCoord := [3]f32 {
-									f32(coordWithoutJitter.x),
-									f32(coordWithoutJitter.y),
-									f32(coordWithoutJitter.z),
-								}
-
-								#no_bounds_check state.visiblePoints[staticVisiblePointsLen] =
-									finalPointCoord
-
-								mapper[vertIndex] = staticVisiblePointsLen
-								staticVisiblePointsLen += 1
+						possibleTriangles := [?][3]PointTypePlusOffset {
+							[3]PointTypePlusOffset {
+								{pointType, {0, 0, 0}},
+								{oneZeroZero, {1, 0, 0}},
+								{oneOneZero, {1, 1, 0}},
+							},
+							[3]PointTypePlusOffset {
+								{pointType, {0, 0, 0}},
+								{oneOneZero, {1, 1, 0}},
+								{zeroOneZero, {0, 1, 0}},
+							},
+							[3]PointTypePlusOffset {
+								{pointType, {0, 0, 0}},
+								{zeroZeroOne, {0, 0, 1}},
+								{zeroOneOne, {0, 1, 1}},
+							},
+							[3]PointTypePlusOffset {
+								{pointType, {0, 0, 0}},
+								{zeroOneOne, {0, 1, 1}},
+								{zeroOneZero, {0, 1, 0}},
+							},
+							[3]PointTypePlusOffset {
+								{pointType, {0, 0, 0}},
+								{oneZeroZero, {1, 0, 0}},
+								{oneZeroOne, {1, 0, 1}},
+							},
+							[3]PointTypePlusOffset {
+								{pointType, {0, 0, 0}},
+								{oneZeroOne, {1, 0, 1}},
+								{zeroZeroOne, {0, 0, 1}},
+							},
+						}
+						possibleTrianglesLoop: for possibleTriangle in possibleTriangles {
+							for pPlusOffset in possibleTriangle {
+								if pPlusOffset.t == .Air do continue possibleTrianglesLoop
 							}
-						}
+							p0 := possibleTriangle[0].t
+							p1 := possibleTriangle[1].t
+							p2 := possibleTriangle[2].t
 
-						// for localVert: uint = 0; localVert < 8; localVert += 1 {
-
-						// 	#no_bounds_check vertIndex :=
-						// 		baseIndex + cubeVertexLinearOffsets[localVert]
-						// 	cornerIndices[localVert] = vertIndex
-
-						// 	#no_bounds_check pointAtOffset := points[vertIndex]
-
-						// 	if pointAtOffset == pointType {
-
-						// 		validCorners += 1
-						// 		marchingCubeIndex |= 1 << localVert
-
-						// 		#no_bounds_check existingVulkanIndex := mapper[vertIndex]
-
-						// 		if existingVulkanIndex == -1 {
-
-						// 			#no_bounds_check offset := cubeVertices[localVert]
-
-						// 			coordWithoutJitter := [3]i32 {
-						// 				worldX + offset.x,
-						// 				yCoord + offset.y,
-						// 				worldZ + offset.z,
-						// 			}
-
-						// 			finalPointCoord := [3]f32 {
-						// 				f32(coordWithoutJitter.x),
-						// 				f32(coordWithoutJitter.y),
-						// 				f32(coordWithoutJitter.z),
-						// 			}
-
-						// 			#no_bounds_check staticVisiblePoints[staticVisiblePointsLen] =
-						// 				finalPointCoord
-
-						// 			mapper[vertIndex] = staticVisiblePointsLen
-						// 			staticVisiblePointsLen += 1
-						// 		}
-						// 	}
-						// }
-
-						if validCorners < 3 do continue
-						// if marchingCubeIndex != 255 do continue
-
-						#no_bounds_check indices :=
-							POINTS_TO_TRIANGLES_CONVERTER_ALL_FACES[marchingCubeIndex]
-
-						for i := 0; i < len(indices); i += 3 {
-
-							#no_bounds_check firstOffset := indices[i]
-							#no_bounds_check secondOffset := indices[i + 1]
-							#no_bounds_check thirdOffset := indices[i + 2]
-
-
-							#no_bounds_check firstRealIndex := simd.extract(
-								cornerArrayIndexes,
-								firstOffset,
-							)
-							#no_bounds_check secondRealIndex := simd.extract(
-								cornerArrayIndexes,
-								secondOffset,
-							)
-							#no_bounds_check thirdRealIndex := simd.extract(
-								cornerArrayIndexes,
-								thirdOffset,
-							)
-							assert(mapper[firstRealIndex] != nil)
-							#no_bounds_check state.indices[staticIndicesLen] = u32(
-								mapper[firstRealIndex].(int),
+							p0WorldCoord := worldBase + possibleTriangle[0].o
+							p0Idx := get_or_create_mapper_idx(
+								mapper[:],
+								p0WorldCoord,
+								base + possibleTriangle[0].o,
+								state.visiblePoints[:],
+								&staticVisiblePointsLen,
 							)
 
-							assert(mapper[secondRealIndex] != nil)
+							p1WorldCoord := worldBase + possibleTriangle[1].o
+							p1Idx := get_or_create_mapper_idx(
+								mapper[:],
+								p1WorldCoord,
+								base + possibleTriangle[1].o,
+								state.visiblePoints[:],
+								&staticVisiblePointsLen,
+							)
 
-							#no_bounds_check state.indices[staticIndicesLen + 1] = u32(
-								mapper[secondRealIndex].(int),
+							p2WorldCoord := worldBase + possibleTriangle[2].o
+							p2Idx := get_or_create_mapper_idx(
+								mapper[:],
+								p2WorldCoord,
+								base + possibleTriangle[2].o,
+								state.visiblePoints[:],
+								&staticVisiblePointsLen,
 							)
-							#no_bounds_check state.indices[staticIndicesLen + 2] = u32(
-								mapper[thirdRealIndex].(int),
-							)
+							state.indices[staticIndicesLen + 0] = p0Idx
+							state.indices[staticIndicesLen + 1] = p1Idx
+							state.indices[staticIndicesLen + 2] = p2Idx
 
 							staticIndicesLen += 3
-
-							#no_bounds_check state.colors[staticColorsLen] =
-								Random_Colors_Per_Point_Type[pointType][(x + y + z) % len(Random_Colors_Per_Point_Type[pointType])]
-
+							state.colors[staticColorsLen] = triangle_decide_color(
+								{
+									possibleTriangle[0].t,
+									possibleTriangle[1].t,
+									possibleTriangle[2].t,
+								},
+								{
+									Random_Colors_Per_Point_Type[p0][staticVisiblePointsLen % len(Random_Colors_Per_Point_Type[p0])],
+									Random_Colors_Per_Point_Type[p1][staticVisiblePointsLen % len(Random_Colors_Per_Point_Type[p1])],
+									Random_Colors_Per_Point_Type[p2][staticVisiblePointsLen % len(Random_Colors_Per_Point_Type[p2])],
+								},
+							)
 							staticColorsLen += 1
+
 						}
+
 					}
 				}
 			}
@@ -750,7 +732,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				mem.copy(
 					vertBufferPtr,
 					raw_data(state.visiblePoints[0:staticVisiblePointsLen]),
-					staticVisiblePointsLen * size_of(state.visiblePoints[0]),
+					int(staticVisiblePointsLen) * size_of(state.visiblePoints[0]),
 				)
 				vma.unmap_memory(vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
 
@@ -767,10 +749,10 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				vma.unmap_memory(vkAllocator, chunk.buffers.indices[i].alloc)
 
 
-				colorBuferPtr: rawptr
-				vk_chk(vma.map_memory(vkAllocator, chunk.buffers.colors[i].alloc, &colorBuferPtr))
+				colorBufferPtr: rawptr
+				vk_chk(vma.map_memory(vkAllocator, chunk.buffers.colors[i].alloc, &colorBufferPtr))
 				mem.copy(
-					colorBuferPtr,
+					colorBufferPtr,
 					raw_data(state.colors[0:staticColorsLen]),
 					staticColorsLen * size_of(state.colors[0]),
 				)
@@ -782,7 +764,47 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	}
 
 }
+get_point_type :: proc(base: [3]i32, offset: [3]i32, points: []PointType) -> PointType {
+	finalCoord := base + offset
 
+	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return .Air
+	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return .Air
+	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return .Air
+
+	index := index_into_point_arrays(finalCoord)
+	return points[index]
+}
+get_or_create_mapper_idx :: proc(
+	mapper: []Maybe(INDEX_TYPE_USED_IN_CHUNKS),
+	worldCoord: [3]i32,
+	idx: [3]i32,
+	vertexArr: [][3]f32,
+	vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
+) -> INDEX_TYPE_USED_IN_CHUNKS {
+	assert(len(mapper) > 0)
+	assert(idx[0] >= 0 && idx[0] < VERTS_PER_X_DIR)
+	assert(idx[1] >= 0 && idx[1] < VERTS_PER_Y_DIR)
+	assert(idx[2] >= 0 && idx[2] < VERTS_PER_Z_DIR)
+	assert(len(vertexArr) > 0)
+	assert(vertexArrayLen != nil)
+
+
+	idxAsValue := index_into_point_arrays(idx)
+	switch v in mapper[idxAsValue] {
+	case u32:
+		return v
+	case:
+		finalCoord :=
+			[3]f32{f32(worldCoord.x), f32(worldCoord.y), f32(worldCoord.z)} +
+			calculate_jitter(worldCoord.x, worldCoord.y, worldCoord.z, seed)
+		vertexArr[vertexArrayLen^] = finalCoord
+		mapper[idxAsValue] = vertexArrayLen^
+		currIdx := vertexArrayLen^
+		vertexArrayLen^ += 1
+		return currIdx
+	}
+
+}
 calculate_jitter :: proc(x, y, z: i32, seed: u64) -> [3]f32 {
 	ux := u64(x)
 	uy := u64(y)
