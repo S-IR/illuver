@@ -9,9 +9,9 @@ seed: u64 = 123
 // device: ^sdl.GPUDevice
 window: ^sdl.Window
 
-
 camera: Camera
 dt: f64
+totalTime: f64 = 0
 
 
 near_plane: f32 : 0.2

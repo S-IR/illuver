@@ -123,6 +123,8 @@ main :: proc() {
 	pointPipeline := point_pipeline_init()
 	defer pipeline_data_delete(pointPipeline)
 
+	highlightSphere := highlight_sphere_init()
+	defer highlight_sphere_destroy(&highlightSphere)
 
 	e: sdl.Event
 	quit := false
@@ -154,6 +156,8 @@ main :: proc() {
 
 			dt = time.duration_seconds(time.since(lastFrameTime))
 			lastFrameTime = time.now()
+			totalTime += f64(dt)
+
 		}
 		defer {
 			prevScreenWidth, prevScreenHeight = screenWidth, screenHeight
@@ -198,7 +202,7 @@ main :: proc() {
 
 		Camera_process_keyboard_movement(&camera)
 		chunks_shift_per_player_movement(&camera)
-		fmt.println("camera", camera.pos)
+		fmt.println("camera pos", camera.pos)
 		view, proj := Camera_view_proj(&camera)
 		cameraPtr: rawptr
 		vma.map_memory(vkAllocator, cameraBuffers[vkFrameIndex].alloc, &cameraPtr)
@@ -305,34 +309,24 @@ main :: proc() {
 			},
 		)
 
-		vk.CmdSetViewport(
-			cb,
-			0,
-			1,
-			&vk.Viewport {
-				width = f32(screenWidth),
-				height = -f32(screenHeight),
-				minDepth = 0,
-				maxDepth = 1,
-				y = f32(screenHeight),
-				x = 0,
-			},
-		)
-		vk.CmdSetScissor(
-			cb,
-			0,
-			1,
-			&vk.Rect2D{extent = {width = screenWidth, height = screenHeight}},
-		)
 
 		// mu_layout()
 		// mu_render_ui(cb, textPipeline)
+		highlight_sphere_draw(
+			cb,
+			&highlightSphere,
+			cameraBuffers[vkFrameIndex].buffer,
+			vk.DeviceSize(size_of(CameraUBO)),
+			camera.pos + camera.front * 1.0,
+			f32(totalTime),
+		)
 		chunks_draw(
 			cb,
 			&pointPipeline,
 			cameraBuffers[vkFrameIndex].buffer,
 			vk.DeviceSize(size_of(CameraUBO)),
 		)
+
 
 		vk.CmdEndRendering(cb)
 

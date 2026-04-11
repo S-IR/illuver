@@ -943,7 +943,20 @@ chunks_draw :: proc(
 	cameraUboSize: vk.DeviceSize,
 ) {
 	vk.CmdBindPipeline(cb, .GRAPHICS, p.graphicsPipeline)
-
+	vk.CmdSetViewport(
+		cb,
+		0,
+		1,
+		&vk.Viewport {
+			width = f32(screenWidth),
+			height = -f32(screenHeight),
+			minDepth = 0,
+			maxDepth = 1,
+			y = f32(screenHeight),
+			x = 0,
+		},
+	)
+	vk.CmdSetScissor(cb, 0, 1, &vk.Rect2D{extent = {width = screenWidth, height = screenHeight}})
 	for x in 0 ..< len(Chunks) {
 		for y in 0 ..< len(Chunks[0]) {
 
