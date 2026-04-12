@@ -192,7 +192,7 @@ highlight_sphere_pipeline_init :: proc() -> (p: PipelineData) {
 				},
 				pInputAssemblyState = &vk.PipelineInputAssemblyStateCreateInfo {
 					sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-					topology = .TRIANGLE_LIST,
+					topology = .LINE_LIST,
 				},
 				pViewportState = &vk.PipelineViewportStateCreateInfo {
 					sType = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,

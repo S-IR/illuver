@@ -4,6 +4,7 @@ import "../modules/vma"
 import "base:runtime"
 import "core:c"
 import "core:fmt"
+import "core:math/linalg"
 import "core:math/rand"
 import "core:mem"
 import "core:os"
@@ -222,7 +223,8 @@ main :: proc() {
 		// 	fmt.printf("%s : %d ,", str, int(weight))
 		// }
 		// fmt.println()
-		// raycastPointHit, raycastDidHappen := raycast_get_viewed_point(&camera)
+		raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(&camera)
+
 		// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 
 		vulkan_update_swapchain()
@@ -309,17 +311,20 @@ main :: proc() {
 			},
 		)
 
+		MIN_RANGE_TO_SEE_POINT :: 6.0
+		if raycastDidHappen &&
+		   linalg.length(camera.pos - raycastPointPos) < MIN_RANGE_TO_SEE_POINT {
+			highlight_sphere_draw(
+				cb,
+				&highlightSphere,
+				cameraBuffers[vkFrameIndex].buffer,
+				vk.DeviceSize(size_of(CameraUBO)),
+				raycastPointPos,
+				f32(totalTime),
+			)
 
-		// mu_layout()
-		// mu_render_ui(cb, textPipeline)
-		highlight_sphere_draw(
-			cb,
-			&highlightSphere,
-			cameraBuffers[vkFrameIndex].buffer,
-			vk.DeviceSize(size_of(CameraUBO)),
-			camera.pos + camera.front * 1.0,
-			f32(totalTime),
-		)
+		}
+
 		chunks_draw(
 			cb,
 			&pointPipeline,

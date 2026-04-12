@@ -5,10 +5,17 @@ import la "core:math/linalg"
 import "core:simd"
 import "core:sort"
 
-raycast_get_viewed_point :: proc(c: ^Camera) -> (closestPoint: PointType, found: bool) {
+
+raycast_get_viewed_point :: proc(
+	c: ^Camera,
+) -> (
+	closestPoint: PointType,
+	closestPointPosition: [3]f32,
+	found: bool,
+) {
 	assert(c != nil)
 	assert(la.length(c.front) > .99 && la.length(c.front) < 1.01)
-	HIT_RADIUS :: 0.3
+	HIT_RADIUS :: 1.0
 	HIT_RADIUS_SQ :: HIT_RADIUS * HIT_RADIUS
 	closestDist := math.INF_F32
 
@@ -125,28 +132,58 @@ raycast_get_viewed_point :: proc(c: ^Camera) -> (closestPoint: PointType, found:
 					len2Simd := vectorX * vectorX + vectorY * vectorY + vectorZSimd * vectorZSimd
 					distSqSimd := len2Simd - distanceAlongViewSimd * distanceAlongViewSimd
 					baseIndex := index_into_point_arrays(x, y, z)
+
 					for l in 0 ..< i32(8) {
 						if z + i32(l) >= VERTS_PER_Z_DIR do break
+
 						point := chunk.points[baseIndex + l]
-						t := simd.extract(distanceAlongViewSimd, l)
-						distSq := simd.extract(distSqSimd, l)
 						when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							if point == 0.0 do continue
 						} else {
 							if point == .Air do continue
 						}
+
+						t := simd.extract(distanceAlongViewSimd, l)
+						distSq := simd.extract(distSqSimd, l)
+
 						if t >= 0 && distSq <= HIT_RADIUS_SQ {
-							if t < closestDist {
-								closestDist = t
-								closestPoint = point
+							jitter := calculate_jitter(
+								i32(posX),
+								i32(posY),
+								i32(basePosZ) + i32(l),
+								seed,
+							)
+
+							actualPos := [3]f32 {
+								posX + jitter.x,
+								posY + jitter.y,
+								basePosZ + f32(l) + jitter.z,
+							}
+
+							// Recompute real distance to ray using jittered position
+							realVecX := actualPos.x - c.pos.x
+							realVecY := actualPos.y - c.pos.y
+							realVecZ := actualPos.z - c.pos.z
+
+							realT :=
+								realVecX * c.front.x + realVecY * c.front.y + realVecZ * c.front.z
+							realLen2 :=
+								realVecX * realVecX + realVecY * realVecY + realVecZ * realVecZ
+							realDistSq := realLen2 - realT * realT
+
+							if realT >= 0 && realDistSq <= HIT_RADIUS_SQ {
+								if realT < closestDist {
+									closestDist = realT
+									closestPoint = point
+									closestPointPosition = actualPos
+								}
 							}
 						}
-					}
-				}
+					}}
 			}
 		}
 	}
 
 	found = closestDist != math.INF_F32
-	return closestPoint, found
+	return closestPoint, closestPointPosition, found
 }
