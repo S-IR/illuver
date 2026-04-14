@@ -52,7 +52,7 @@ Camera_new :: proc(
 	Camera_rotate(&c)
 	return c
 }
-Camera_process_keyboard_movement :: proc(c: ^Camera) {
+camera_process_keyboard_movement :: proc(c: ^Camera) {
 	keys := sdl.GetKeyboardState(nil)
 
 	movementVector: float3 = {}

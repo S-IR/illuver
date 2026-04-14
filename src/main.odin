@@ -147,6 +147,10 @@ main :: proc() {
 
 	free_all(context.temp_allocator)
 	defer vk.DeviceWaitIdle(vkDevice)
+
+	didLeftClickThisFrame := false
+	mouseX, mouseY: f32
+
 	for !quit {
 		tracy.FrameMark()
 		tracy.Plot("Test", f64(time.now()._nsec))
@@ -164,7 +168,7 @@ main :: proc() {
 			prevScreenWidth, prevScreenHeight = screenWidth, screenHeight
 		}
 
-
+		didLeftClickThisFrame = false
 		for sdl.PollEvent(&e) {
 
 			SCALE_STEP :: f32(0.001)
@@ -189,6 +193,12 @@ main :: proc() {
 				}
 			case .MOUSE_MOTION:
 				Camera_process_mouse_movement(&camera, e.motion.xrel, e.motion.yrel)
+				mouseX = f32(e.motion.x)
+				mouseY = f32(e.motion.y)
+			case .MOUSE_BUTTON_DOWN:
+				if e.button.button == sdl.BUTTON_LEFT {
+					didLeftClickThisFrame = true
+				}
 			case:
 				continue
 			}
@@ -201,8 +211,10 @@ main :: proc() {
 		}
 		vulkan_update_swapchain()
 
-		Camera_process_keyboard_movement(&camera)
-		chunks_shift_per_player_movement(&camera)
+		camera_process_keyboard_movement(&camera)
+
+		chunks_frame_update(&camera)
+		// chunks_shift_per_player_movement(&camera)
 		fmt.println("camera pos", camera.pos)
 		view, proj := Camera_view_proj(&camera)
 		cameraPtr: rawptr
@@ -223,8 +235,15 @@ main :: proc() {
 		// 	fmt.printf("%s : %d ,", str, int(weight))
 		// }
 		// fmt.println()
-		raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(&camera)
+		rayDir := compute_mouse_ray(mouseX, mouseY, screenWidth, screenHeight, view, proj)
 
+		raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(
+			camera.pos,
+			camera.front,
+		)
+		if raycastDidHappen && didLeftClickThisFrame {
+			chunk_set_point(raycastPointPos, .Air)
+		}
 		// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 
 		vulkan_update_swapchain()
@@ -313,6 +332,7 @@ main :: proc() {
 
 		MIN_RANGE_TO_SEE_POINT :: 6.0
 		if raycastDidHappen &&
+		   !didLeftClickThisFrame &&
 		   linalg.length(camera.pos - raycastPointPos) < MIN_RANGE_TO_SEE_POINT {
 			highlight_sphere_draw(
 				cb,

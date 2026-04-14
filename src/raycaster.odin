@@ -7,14 +7,17 @@ import "core:sort"
 
 
 raycast_get_viewed_point :: proc(
-	c: ^Camera,
+	origin: [3]f32,
+	rayDir: [3]f32,
 ) -> (
 	closestPoint: PointType,
 	closestPointPosition: [3]f32,
 	found: bool,
 ) {
-	assert(c != nil)
-	assert(la.length(c.front) > .99 && la.length(c.front) < 1.01)
+	// assert(c != nil)
+	assert(la.length(rayDir) > .99 && la.length(rayDir) < 1.01)
+	// assert(la.length(rayDir) > .99 && la.length(rayDir) < 1.01)
+
 	HIT_RADIUS :: 1.0
 	HIT_RADIUS_SQ :: HIT_RADIUS * HIT_RADIUS
 	closestDist := math.INF_F32
@@ -41,14 +44,14 @@ raycast_get_viewed_point :: proc(
 			tMaxExp: f32 = math.INF_F32
 			intersectsExp := true
 			for i in 0 ..< 3 {
-				if math.abs(c.front[i]) < math.F32_EPSILON {
-					if c.pos[i] < expMin[i] || c.pos[i] > expMax[i] {
+				if math.abs(rayDir[i]) < math.F32_EPSILON {
+					if origin[i] < expMin[i] || origin[i] > expMax[i] {
 						intersectsExp = false
 						break
 					}
 				} else {
-					t1 := (expMin[i] - c.pos[i]) / c.front[i]
-					t2 := (expMax[i] - c.pos[i]) / c.front[i]
+					t1 := (expMin[i] - origin[i]) / rayDir[i]
+					t2 := (expMax[i] - origin[i]) / rayDir[i]
 					if t1 > t2 {t1, t2 = t2, t1}
 					tMinExp = max(tMinExp, t1)
 					tMaxExp = min(tMaxExp, t2)
@@ -65,14 +68,14 @@ raycast_get_viewed_point :: proc(
 			tMaxOrig: f32 = math.INF_F32
 			intersectsOrig := true
 			for i in 0 ..< 3 {
-				if math.abs(c.front[i]) < math.F32_EPSILON {
-					if c.pos[i] < boxMin[i] || c.pos[i] > boxMax[i] {
+				if math.abs(rayDir[i]) < math.F32_EPSILON {
+					if origin[i] < boxMin[i] || origin[i] > boxMax[i] {
 						intersectsOrig = false
 						break
 					}
 				} else {
-					t1 := (boxMin[i] - c.pos[i]) / c.front[i]
-					t2 := (boxMax[i] - c.pos[i]) / c.front[i]
+					t1 := (boxMin[i] - origin[i]) / rayDir[i]
+					t2 := (boxMax[i] - origin[i]) / rayDir[i]
 					if t1 > t2 {t1, t2 = t2, t1}
 					tMinOrig = max(tMinOrig, t1)
 					tMaxOrig = min(tMaxOrig, t2)
@@ -95,14 +98,14 @@ raycast_get_viewed_point :: proc(
 	})
 
 	cameraZSIMD := #simd[8]f32 {
-		c.pos.z,
-		c.pos.z,
-		c.pos.z,
-		c.pos.z,
-		c.pos.z,
-		c.pos.z,
-		c.pos.z,
-		c.pos.z,
+		origin.z,
+		origin.z,
+		origin.z,
+		origin.z,
+		origin.z,
+		origin.z,
+		origin.z,
+		origin.z,
 	}
 
 	for info in potentialChunks {
@@ -124,11 +127,11 @@ raycast_get_viewed_point :: proc(
 						basePosZ + 6,
 						basePosZ + 7,
 					}
-					vectorX := posX - c.pos.x
-					vectorY := posY - c.pos.y
+					vectorX := posX - origin.x
+					vectorY := posY - origin.y
 					vectorZSimd := vzSimd - cameraZSIMD
 					distanceAlongViewSimd :=
-						vectorX * c.front.x + vectorY * c.front.y + vectorZSimd * c.front.z
+						vectorX * rayDir.x + vectorY * rayDir.y + vectorZSimd * rayDir.z
 					len2Simd := vectorX * vectorX + vectorY * vectorY + vectorZSimd * vectorZSimd
 					distSqSimd := len2Simd - distanceAlongViewSimd * distanceAlongViewSimd
 					baseIndex := index_into_point_arrays(x, y, z)
@@ -147,26 +150,21 @@ raycast_get_viewed_point :: proc(
 						distSq := simd.extract(distSqSimd, l)
 
 						if t >= 0 && distSq <= HIT_RADIUS_SQ {
-							jitter := calculate_jitter(
-								i32(posX),
-								i32(posY),
-								i32(basePosZ) + i32(l),
-								seed,
-							)
+							// jitter := calculate_jitter(
+							// 	i32(posX),
+							// 	i32(posY),
+							// 	i32(basePosZ) + i32(l),
+							// 	seed,
+							// )
 
-							actualPos := [3]f32 {
-								posX + jitter.x,
-								posY + jitter.y,
-								basePosZ + f32(l) + jitter.z,
-							}
+							actualPos := point_real_world_position({posX, posY, basePosZ + f32(l)})
 
-							// Recompute real distance to ray using jittered position
-							realVecX := actualPos.x - c.pos.x
-							realVecY := actualPos.y - c.pos.y
-							realVecZ := actualPos.z - c.pos.z
+							realVecX := actualPos.x - origin.x
+							realVecY := actualPos.y - origin.y
+							realVecZ := actualPos.z - origin.z
 
 							realT :=
-								realVecX * c.front.x + realVecY * c.front.y + realVecZ * c.front.z
+								realVecX * rayDir.x + realVecY * rayDir.y + realVecZ * rayDir.z
 							realLen2 :=
 								realVecX * realVecX + realVecY * realVecY + realVecZ * realVecZ
 							realDistSq := realLen2 - realT * realT
@@ -186,4 +184,26 @@ raycast_get_viewed_point :: proc(
 
 	found = closestDist != math.INF_F32
 	return closestPoint, closestPointPosition, found
+}
+compute_mouse_ray :: proc(
+	mouseX, mouseY: f32,
+	screenWidth, screenHeight: u32,
+	view, proj: matrix[4, 4]f32,
+) -> [3]f32 {
+
+	ndcX := (2.0 * f32(mouseX) / f32(screenWidth)) - 1.0
+	ndcY := 1.0 - (2.0 * f32(mouseY) / f32(screenHeight))
+
+	inv := la.inverse(proj * view)
+
+	near := float4{ndcX, ndcY, 0, 1}
+	far := float4{ndcX, ndcY, 1, 1}
+
+	nearW := inv * near
+	farW := inv * far
+
+	nearW.xyz /= nearW.w
+	farW.xyz /= farW.w
+
+	return la.normalize(farW.xyz - nearW.xyz)
 }

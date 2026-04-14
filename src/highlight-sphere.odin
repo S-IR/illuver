@@ -203,6 +203,7 @@ highlight_sphere_pipeline_init :: proc() -> (p: PipelineData) {
 					sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 					lineWidth = 1,
 					cullMode = {},
+					depthBiasEnable = true,
 					frontFace = .CLOCKWISE,
 				},
 				pMultisampleState = &vk.PipelineMultisampleStateCreateInfo {

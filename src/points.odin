@@ -168,13 +168,13 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 		),
 	)
 
-	// --- Vertex input (float3 at location 0) ---
 	viBindings := [?]vk.VertexInputBindingDescription {
 		{binding = 0, stride = size_of([3]f32), inputRate = .VERTEX},
+		{binding = 1, stride = size_of([2]f32), inputRate = .VERTEX},
 	}
-
 	vaDescriptors := [?]vk.VertexInputAttributeDescription {
 		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = 0},
+		{location = 1, binding = 1, format = .R32G32_SFLOAT, offset = 0},
 	}
 
 	dynamicStates := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
@@ -230,7 +230,7 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 					sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 					lineWidth = 1.0,
 					cullMode = {},
-					frontFace = .CLOCKWISE,
+					frontFace = .COUNTER_CLOCKWISE,
 				},
 				pMultisampleState = &vk.PipelineMultisampleStateCreateInfo {
 					sType = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
@@ -321,7 +321,29 @@ pipeline_data_delete :: proc(p: PipelineData) {
 // 	return visibles
 // }
 
-triangle_decide_color :: proc(points: [3]PointType, colors: [3][4]f32) -> [4]f32 {
-	for p in points do assert(p != .Air)
-	return colors[0]
+triangle_decide_color :: proc(pointTypes: [3]PointType, pointCoords: [3][3]i32) -> [4]f32 {
+
+	for p in pointTypes do assert(p != .Air)
+	colors := [3][4]f32{}
+
+	for i in 0 ..< 3 {
+		idx := math.abs(hash_i32(pointCoords[i].x, pointCoords[i].y, pointCoords[i].z, seed))
+		idx %= len(Random_Colors_Per_Point_Type[pointTypes[i]])
+		colors[i] = Random_Colors_Per_Point_Type[pointTypes[i]][idx]
+	}
+	color := colors[0]
+	for i in 1 ..< 3 {
+		colors = linalg.lerp(color, colors[i], .5)
+	}
+	return color
+}
+hash_i32 :: proc(x, y, z: i32, seed: u64) -> i32 {
+	h := seed
+	h ~= u64(x) * 0x9e3779b97f4a7c15
+	h ~= u64(y) * 0x6c62272e07bb0142
+	h ~= u64(z) * 0xd2a98b26625eee7b
+	h = (h ~ (h >> 30)) * 0xbf58476d1ce4e5b9
+	h = (h ~ (h >> 27)) * 0x94d049bb133111eb
+	h ~= h >> 31
+	return i32(h)
 }

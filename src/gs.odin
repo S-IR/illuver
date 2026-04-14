@@ -14,6 +14,6 @@ dt: f64
 totalTime: f64 = 0
 
 
-near_plane: f32 : 0.2
+near_plane: f32 : 0.1
 far_plane: f32 : 160.0
 NUM_CORES := -1

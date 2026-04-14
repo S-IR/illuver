@@ -43,17 +43,19 @@ CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 
 NUM_WORKER_THREADS := 4
 Chunk :: struct {
-	pos:          int2,
 	points:       [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]PointType,
+	heightMap:    [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]i32,
 	buffers:      struct {
 		pointsBuffer: [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem,
 		indices:      [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem,
 		colors:       [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem,
 	},
+	pos:          int2,
 	totalPoints:  u32,
 	totalIndices: u32,
 	arena:        virtual.Arena,
 	alloc:        mem.Allocator,
+	dirty:        bool,
 }
 
 
@@ -114,7 +116,6 @@ chunks_init :: proc(c: ^Camera) {
 VERT_STRIDE_X :: VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
 VERT_STRIDE_Y :: VERTS_PER_Z_DIR
 index_into_point_arrays_scalars :: #force_inline proc "contextless" (x, y, z: i32) -> i32 {
-
 	return x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
 }
 index_into_point_arrays_vector :: #force_inline proc "contextless" (v: [3]i32) -> i32 {
@@ -294,7 +295,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								MIN_Y + vertIndex.y,
 								pos[1] + vertIndex.z,
 							}
-							// jitteringVector := calculate_jitter(
+							// jitteringVector := (calculate_jitter)(
 							// 	coordWithoutJitter.x,
 							// 	coordWithoutJitter.y,
 							// 	coordWithoutJitter.z,
@@ -453,11 +454,6 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		}
 
 
-		staticVisiblePointsLen: INDEX_TYPE_USED_IN_CHUNKS = 0
-		staticIndicesLen: int = 0
-		staticColorsLen: int = 0
-
-
 		chunk.pos = pos
 		tracy.ZoneEnd(allocZoneCtx)
 
@@ -480,17 +476,18 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					worldZ := pos[1] + z
 					biomeWeights := get_biome_weights(worldX, worldZ, seed)
 					height: i32 = 0
-					for weight, biome in biomeWeights {
-						if weight < MIN_BIOME_WEIGHT_TO_NOT_IGNORE do continue
-						height += i32(
-							biome_height(biome, worldX, worldZ, seed) * (f32(weight) * inv255),
-						)
-						height = math.clamp(height, MIN_Y + 1, MAX_Y - 1)
-					}
+					// for weight, biome in biomeWeights {
+					// 	if weight < MIN_BIOME_WEIGHT_TO_NOT_IGNORE do continue
+					// 	height += i32(
+					// 		biome_height(biome, worldX, worldZ, seed) * (f32(weight) * inv255),
+					// 	)
+					// 	height = math.clamp(height, MIN_Y + 1, MAX_Y - 1)
+					// }
+					height = 0
 					assert(height >= MIN_Y)
 					// isCrystalblooomArr[x * VERTS_PER_Z_DIR + z] =
 					// 	biomeWeights[.Crystalbloom] > BIOME_THRESHOLD
-					state.heightMap[x * VERTS_PER_Z_DIR + z] = height
+					chunk.heightMap[x * VERTS_PER_Z_DIR + z] = height
 
 					for yCoord: i32 = MIN_Y; yCoord <= height; yCoord += 1 {
 						y := yCoord - MIN_Y
@@ -532,6 +529,19 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		// 	}
 
 		// }
+		chunk_create_gpu_geometry(chunk, state)
+
+	}
+
+	chunk_create_gpu_geometry :: proc(chunk: ^Chunk, state: ^ChunkWorkerState) {
+		pos := state.pos
+
+		staticVisiblePointsLen: INDEX_TYPE_USED_IN_CHUNKS = 0
+		staticIndicesLen: int = 0
+		staticColorsLen: int = 0
+
+		// staticBarycentricsLen: int = 0
+
 		{
 			tracy.Zone()
 
@@ -557,10 +567,10 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 					isEdgeZ := z == 0 || z == VERTS_PER_Z_DIR - 2
 					worldZ := pos[1] + z
-					height := state.heightMap[x * VERTS_PER_Z_DIR + z]
+					height := chunk.heightMap[x * VERTS_PER_Z_DIR + z]
 
 
-					for y: i32 = 0; y < height - MIN_Y; y += 1 {
+					for y: i32 = 0; y <= height - MIN_Y; y += 1 {
 						baseIndex := x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
 						pointType := points[baseIndex]
 						if pointType == .Air do continue
@@ -583,8 +593,17 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						if !isChunkEdge {
 							isSurrounded := true
 							for p in pointsSimdNeighbors {
-								neighbourEdge := baseIndex + p
-								neighbour := cast(#simd[8]u16)neighbourEdge
+								neighbourIndices := baseIndex + p
+								neighbour := #simd[8]u16 {
+									u16(points[simd.extract(neighbourIndices, 0)]),
+									u16(points[simd.extract(neighbourIndices, 1)]),
+									u16(points[simd.extract(neighbourIndices, 2)]),
+									u16(points[simd.extract(neighbourIndices, 3)]),
+									u16(points[simd.extract(neighbourIndices, 4)]),
+									u16(points[simd.extract(neighbourIndices, 5)]),
+									u16(points[simd.extract(neighbourIndices, 6)]),
+									u16(points[simd.extract(neighbourIndices, 7)]),
+								}
 								eqMask := simd.lanes_eq(neighbour, airSimd)
 								anyAir := simd.reduce_or(eqMask) != 0
 								if anyAir {
@@ -643,7 +662,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{zeroZeroOne, {0, 0, 1}},
 							},
 						}
-						possibleTrianglesLoop: for possibleTriangle in possibleTriangles {
+						possibleTrianglesLoop: for possibleTriangle, i in possibleTriangles {
 							for pPlusOffset in possibleTriangle {
 								if pPlusOffset.t == .Air do continue possibleTrianglesLoop
 							}
@@ -681,6 +700,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							state.indices[staticIndicesLen + 1] = p1Idx
 							state.indices[staticIndicesLen + 2] = p2Idx
 
+
+							// staticBarycentricsLen+=3
+
 							staticIndicesLen += 3
 							state.colors[staticColorsLen] = triangle_decide_color(
 								{
@@ -688,11 +710,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 									possibleTriangle[1].t,
 									possibleTriangle[2].t,
 								},
-								{
-									Random_Colors_Per_Point_Type[p0][staticVisiblePointsLen % len(Random_Colors_Per_Point_Type[p0])],
-									Random_Colors_Per_Point_Type[p1][staticVisiblePointsLen % len(Random_Colors_Per_Point_Type[p1])],
-									Random_Colors_Per_Point_Type[p2][staticVisiblePointsLen % len(Random_Colors_Per_Point_Type[p2])],
-								},
+								{p0WorldCoord, p1WorldCoord, p2WorldCoord},
 							)
 							staticColorsLen += 1
 
@@ -762,7 +780,6 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 		}
 	}
-
 }
 get_point_type :: proc(base: [3]i32, offset: [3]i32, points: []PointType) -> PointType {
 	finalCoord := base + offset
@@ -794,9 +811,9 @@ get_or_create_mapper_idx :: proc(
 	case u32:
 		return v
 	case:
-		finalCoord :=
-			[3]f32{f32(worldCoord.x), f32(worldCoord.y), f32(worldCoord.z)} +
-			calculate_jitter(worldCoord.x, worldCoord.y, worldCoord.z, seed)
+		finalCoord := point_real_world_position(
+			[3]f32{f32(worldCoord.x), f32(worldCoord.y), f32(worldCoord.z)},
+		)
 		vertexArr[vertexArrayLen^] = finalCoord
 		mapper[idxAsValue] = vertexArrayLen^
 		currIdx := vertexArrayLen^
@@ -804,6 +821,10 @@ get_or_create_mapper_idx :: proc(
 		return currIdx
 	}
 
+}
+point_real_world_position :: proc(worldXYZ: [3]f32) -> [3]f32 {
+	return worldXYZ
+	// return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), seed)
 }
 calculate_jitter :: proc(x, y, z: i32, seed: u64) -> [3]f32 {
 	ux := u64(x)
@@ -813,129 +834,19 @@ calculate_jitter :: proc(x, y, z: i32, seed: u64) -> [3]f32 {
 	h = (h ~ (h >> 13)) * 0x27d4eb2d
 	h = (h ~ (h >> 15)) * 0x85ebca6b
 	h = h ~ (h >> 16)
-	fx := f32((h) & 0xFFFF) / 65535.0 - 0.2
-	fy := f32((h >> 16) & 0xFFFF) / 65535.0 - 0.2
-	fz := f32((h >> 32) & 0xFFFF) / 65535.0 - 0.2
+	fx := f32((h) & 0xFFFF) / 65536.0 - 0.5
+	fy := f32((h >> 16) & 0xFFFF) / 65536.0 - 0.5
+	fz := f32((h >> 32) & 0xFFFF) / 65536.0 - 0.5
+
+
+	assert(fx < .5)
+	assert(fy < .5)
+	assert(fz < .5)
+
 	return {fx, fy, fz}
 }
 
 
-chunks_shift_per_player_movement :: proc(c: ^Camera) {
-	tracy.Zone()
-
-	xzOfCurrentCenterChunk := int2{i32(c.pos.x), i32(c.pos.z)} / CHUNK_STRIDE
-	xzOfPrevCenterChunk := Chunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX].pos / CHUNK_STRIDE
-	if xzOfCurrentCenterChunk == xzOfPrevCenterChunk do return
-	delta := xzOfCurrentCenterChunk - xzOfPrevCenterChunk
-	half := CHUNKS_PER_DIRECTION / 2
-
-	if delta.x != 0 {
-		count := abs(delta.x)
-		for i in 0 ..< count {
-			if delta.x > 0 {
-				for x in 0 ..< CHUNKS_PER_DIRECTION - 1 {
-					for z in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x + 1][z].buffers
-						Chunks[x][z] = Chunks[x + 1][z]
-						Chunks[x][z].buffers, Chunks[x + 1][z].buffers =
-							secondBuffers, firstBuffers
-						Chunks[x + 1][z].points = {}
-						Chunks[x + 1][z].arena = {}
-						Chunks[x + 1][z].alloc = {}
-					}
-				}
-				for z in 0 ..< CHUNKS_PER_DIRECTION {
-					relX := i32(CHUNKS_PER_DIRECTION - 1 - half) + i32(i)
-					relZ := i32(z - half)
-					pos := int2 {
-						(xzOfCurrentCenterChunk[0] + relX) * CHUNK_STRIDE,
-						(xzOfCurrentCenterChunk[1] + relZ) * CHUNK_STRIDE,
-					}
-					chunk_init_add_thread(CHUNKS_PER_DIRECTION - 1, z, pos)
-				}
-			} else {
-				for x := CHUNKS_PER_DIRECTION - 1; x > 0; x -= 1 {
-					for z in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x - 1][z].buffers
-						Chunks[x][z] = Chunks[x - 1][z]
-						Chunks[x][z].buffers, Chunks[x - 1][z].buffers =
-							secondBuffers, firstBuffers
-
-						Chunks[x - 1][z].points = {}
-						Chunks[x - 1][z].arena = {}
-						Chunks[x - 1][z].alloc = {}
-					}
-				}
-				for z in 0 ..< CHUNKS_PER_DIRECTION {
-					relX := i32(0 - half) - i32(i)
-					relZ := i32(z - half)
-					pos := int2 {
-						(xzOfCurrentCenterChunk[0] + relX) * CHUNK_STRIDE,
-						(xzOfCurrentCenterChunk[1] + relZ) * CHUNK_STRIDE,
-					}
-					chunk_init_add_thread(0, z, pos)
-				}
-			}
-		}
-	}
-
-	if delta[1] != 0 {
-		count := abs(delta[1])
-		for i in 0 ..< count {
-			if delta[1] > 0 {
-				for z in 0 ..< CHUNKS_PER_DIRECTION - 1 {
-					for x in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x][z + 1].buffers
-						Chunks[x][z] = Chunks[x][z + 1]
-						Chunks[x][z].buffers, Chunks[x][z + 1].buffers =
-							secondBuffers, firstBuffers
-
-						Chunks[x][z + 1].points = {}
-						Chunks[x][z + 1].arena = {}
-						Chunks[x][z + 1].alloc = {}
-					}
-				}
-				for x in 0 ..< CHUNKS_PER_DIRECTION {
-					relX := i32(x - half)
-					relZ := i32(CHUNKS_PER_DIRECTION - 1 - half) + i32(i)
-					pos := int2 {
-						(xzOfCurrentCenterChunk[0] + relX) * CHUNK_STRIDE,
-						(xzOfCurrentCenterChunk[1] + relZ) * CHUNK_STRIDE,
-					}
-					chunk_init_add_thread(x, CHUNKS_PER_DIRECTION - 1, pos)
-				}
-			} else {
-				for z := CHUNKS_PER_DIRECTION - 1; z > 0; z -= 1 {
-					for x in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x][z - 1].buffers
-						Chunks[x][z] = Chunks[x][z - 1]
-						Chunks[x][z].buffers, Chunks[x][z - 1].buffers =
-							secondBuffers, firstBuffers
-
-						Chunks[x][z - 1].points = {}
-						Chunks[x][z - 1].arena = {}
-						Chunks[x][z - 1].alloc = {}
-					}
-				}
-				for x in 0 ..< CHUNKS_PER_DIRECTION {
-					relX := i32(x - half)
-					relZ := i32(0 - half) - i32(i)
-					pos := int2 {
-						(xzOfCurrentCenterChunk[0] + relX) * CHUNK_STRIDE,
-						(xzOfCurrentCenterChunk[1] + relZ) * CHUNK_STRIDE,
-					}
-					chunk_init_add_thread(x, 0, pos)
-				}
-			}
-		}
-	}
-	sync.wait(&chunkWorkersWG)
-
-}
 chunks_draw :: proc(
 	cb: vk.CommandBuffer,
 	p: ^PipelineData,
