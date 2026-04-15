@@ -666,103 +666,191 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 						}
 
-						oneZeroZero := get_point_type(base, {1, 0, 0}, chunk.points[:])
-						oneOneZero := get_point_type(base, {1, 1, 0}, chunk.points[:])
-						zeroOneZero := get_point_type(base, {0, 1, 0}, chunk.points[:])
+						// Inline neighbor point fetches
+						nx1 := x + 1;ny1 := y;nz1 := z
+						oneZeroZero :=
+							points[index_into_point_arrays(nx1, ny1, nz1)] if nx1 < VERTS_PER_X_DIR else 0
 
-						zeroZeroOne := get_point_type(base, {0, 0, 1}, chunk.points[:])
-						zeroOneOne := get_point_type(base, {0, 1, 1}, chunk.points[:])
+						nx2 := x + 1;ny2 := y + 1;nz2 := z
+						oneOneZero :=
+							points[index_into_point_arrays(nx2, ny2, nz2)] if nx2 < VERTS_PER_X_DIR && ny2 < VERTS_PER_Y_DIR else 0
 
-						oneZeroOne := get_point_type(base, {1, 0, 1}, chunk.points[:])
+						nx3 := x;ny3 := y + 1;nz3 := z
+						zeroOneZero :=
+							points[index_into_point_arrays(nx3, ny3, nz3)] if ny3 < VERTS_PER_Y_DIR else 0
 
-						PointTypePlusOffset :: struct {
-							v: u16,
-							o: [3]i32,
-						}
-						possibleTriangles := [?][3]PointTypePlusOffset {
-							[3]PointTypePlusOffset {
-								{pointVal, {0, 0, 0}},
-								{oneZeroZero, {1, 0, 0}},
-								{oneOneZero, {1, 1, 0}},
-							},
-							[3]PointTypePlusOffset {
-								{pointVal, {0, 0, 0}},
-								{oneOneZero, {1, 1, 0}},
-								{zeroOneZero, {0, 1, 0}},
-							},
-							[3]PointTypePlusOffset {
-								{pointVal, {0, 0, 0}},
-								{zeroZeroOne, {0, 0, 1}},
-								{zeroOneOne, {0, 1, 1}},
-							},
-							[3]PointTypePlusOffset {
-								{pointVal, {0, 0, 0}},
-								{zeroOneOne, {0, 1, 1}},
-								{zeroOneZero, {0, 1, 0}},
-							},
-							[3]PointTypePlusOffset {
-								{pointVal, {0, 0, 0}},
-								{oneZeroZero, {1, 0, 0}},
-								{oneZeroOne, {1, 0, 1}},
-							},
-							[3]PointTypePlusOffset {
-								{pointVal, {0, 0, 0}},
-								{oneZeroOne, {1, 0, 1}},
-								{zeroZeroOne, {0, 0, 1}},
-							},
-						}
-						possibleTrianglesLoop: for possibleTriangle, i in possibleTriangles {
-							for pPlusOffset in possibleTriangle {
-								if pPlusOffset.v == 0 do continue possibleTrianglesLoop
+						nx4 := x;ny4 := y;nz4 := z + 1
+						zeroZeroOne :=
+							points[index_into_point_arrays(nx4, ny4, nz4)] if nz4 < VERTS_PER_Z_DIR else 0
+
+						nx5 := x;ny5 := y + 1;nz5 := z + 1
+						zeroOneOne :=
+							points[index_into_point_arrays(nx5, ny5, nz5)] if ny5 < VERTS_PER_Y_DIR && nz5 < VERTS_PER_Z_DIR else 0
+
+						nx6 := x + 1;ny6 := y;nz6 := z + 1
+						oneZeroOne :=
+							points[index_into_point_arrays(nx6, ny6, nz6)] if nx6 < VERTS_PER_X_DIR && nz6 < VERTS_PER_Z_DIR else 0
+
+						emit_triangle :: #force_inline proc(
+							mapper: []INDEX_TYPE_USED_IN_CHUNKS,
+							worldBase: [3]i32,
+							base: [3]i32,
+							v0, v1, v2: u16,
+							o0, o1, o2: [3]i32,
+							vertexArr: [][3]f32,
+							vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
+							indices: []INDEX_TYPE_USED_IN_CHUNKS,
+							staticIndicesLen: ^int,
+							colors: [][4]f32,
+							staticColorsLen: ^int,
+						) {
+							if v0 == 0 || v1 == 0 || v2 == 0 do return
+
+							idx0 := get_or_create_mapper_idx(
+								mapper,
+								worldBase + o0,
+								base + o0,
+								vertexArr,
+								vertexArrayLen,
+							)
+							idx1 := get_or_create_mapper_idx(
+								mapper,
+								worldBase + o1,
+								base + o1,
+								vertexArr,
+								vertexArrayLen,
+							)
+							idx2 := get_or_create_mapper_idx(
+								mapper,
+								worldBase + o2,
+								base + o2,
+								vertexArr,
+								vertexArrayLen,
+							)
+							#no_bounds_check {
+								i := staticIndicesLen^
+								indices[i + 0] = idx0
+								indices[i + 1] = idx1
+								indices[i + 2] = idx2
+								staticIndicesLen^ += 3
+
+								colors[staticColorsLen^] = triangle_decide_color({v0, v1, v2})
+								staticColorsLen^ += 1
 							}
-							p0 := possibleTriangle[0].v
-							p1 := possibleTriangle[1].v
-							p2 := possibleTriangle[2].v
-
-							p0WorldCoord := worldBase + possibleTriangle[0].o
-							p0Idx := get_or_create_mapper_idx(
-								mapper[:],
-								p0WorldCoord,
-								base + possibleTriangle[0].o,
-								state.visiblePoints[:],
-								&staticVisiblePointsLen,
-							)
-
-							p1WorldCoord := worldBase + possibleTriangle[1].o
-							p1Idx := get_or_create_mapper_idx(
-								mapper[:],
-								p1WorldCoord,
-								base + possibleTriangle[1].o,
-								state.visiblePoints[:],
-								&staticVisiblePointsLen,
-							)
-
-							p2WorldCoord := worldBase + possibleTriangle[2].o
-							p2Idx := get_or_create_mapper_idx(
-								mapper[:],
-								p2WorldCoord,
-								base + possibleTriangle[2].o,
-								state.visiblePoints[:],
-								&staticVisiblePointsLen,
-							)
-							state.indices[staticIndicesLen + 0] = p0Idx
-							state.indices[staticIndicesLen + 1] = p1Idx
-							state.indices[staticIndicesLen + 2] = p2Idx
-
-
-							// staticBarycentricsLen+=3
-
-							staticIndicesLen += 3
-							state.colors[staticColorsLen] = triangle_decide_color(
-								{
-									possibleTriangle[0].v,
-									possibleTriangle[1].v,
-									possibleTriangle[2].v,
-								},
-							)
-							staticColorsLen += 1
 
 						}
+
+						// Unrolled triangle generation
+						// Front face (z=0)
+						emit_triangle(
+							mapper[:],
+							worldBase,
+							base,
+							pointVal,
+							oneZeroZero,
+							oneOneZero,
+							{0, 0, 0},
+							{1, 0, 0},
+							{1, 1, 0},
+							state.visiblePoints[:],
+							&staticVisiblePointsLen,
+							state.indices[:],
+							&staticIndicesLen,
+							state.colors[:],
+							&staticColorsLen,
+						)
+
+						emit_triangle(
+							mapper[:],
+							worldBase,
+							base,
+							pointVal,
+							oneOneZero,
+							zeroOneZero,
+							{0, 0, 0},
+							{1, 1, 0},
+							{0, 1, 0},
+							state.visiblePoints[:],
+							&staticVisiblePointsLen,
+							state.indices[:],
+							&staticIndicesLen,
+							state.colors[:],
+							&staticColorsLen,
+						)
+
+						// Left face (x=0)
+						emit_triangle(
+							mapper[:],
+							worldBase,
+							base,
+							pointVal,
+							zeroZeroOne,
+							zeroOneOne,
+							{0, 0, 0},
+							{0, 0, 1},
+							{0, 1, 1},
+							state.visiblePoints[:],
+							&staticVisiblePointsLen,
+							state.indices[:],
+							&staticIndicesLen,
+							state.colors[:],
+							&staticColorsLen,
+						)
+
+						emit_triangle(
+							mapper[:],
+							worldBase,
+							base,
+							pointVal,
+							zeroOneOne,
+							zeroOneZero,
+							{0, 0, 0},
+							{0, 1, 1},
+							{0, 1, 0},
+							state.visiblePoints[:],
+							&staticVisiblePointsLen,
+							state.indices[:],
+							&staticIndicesLen,
+							state.colors[:],
+							&staticColorsLen,
+						)
+
+						// Bottom face (y=0)
+						emit_triangle(
+							mapper[:],
+							worldBase,
+							base,
+							pointVal,
+							oneZeroZero,
+							oneZeroOne,
+							{0, 0, 0},
+							{1, 0, 0},
+							{1, 0, 1},
+							state.visiblePoints[:],
+							&staticVisiblePointsLen,
+							state.indices[:],
+							&staticIndicesLen,
+							state.colors[:],
+							&staticColorsLen,
+						)
+
+						emit_triangle(
+							mapper[:],
+							worldBase,
+							base,
+							pointVal,
+							oneZeroOne,
+							zeroZeroOne,
+							{0, 0, 0},
+							{1, 0, 1},
+							{0, 0, 1},
+							state.visiblePoints[:],
+							&staticVisiblePointsLen,
+							state.indices[:],
+							&staticIndicesLen,
+							state.colors[:],
+							&staticColorsLen,
+						)
 
 					}
 				}
@@ -828,7 +916,11 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		}
 	}
 }
-get_point_type :: proc "contextless" (base: [3]i32, offset: [3]i32, points: []u16) -> u16 {
+get_point_type :: #force_inline proc "contextless" (
+	base: [3]i32,
+	offset: [3]i32,
+	points: []u16,
+) -> u16 {
 	finalCoord := base + offset
 
 	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return 0

@@ -100,17 +100,22 @@ main :: proc() {
 			"Illuver",
 			i32(screenWidth),
 			i32(screenHeight),
-			{.RESIZABLE, .VULKAN, .ALWAYS_ON_TOP},
+			{.RESIZABLE, .VULKAN},
 		)
 		sdl_ensure(window != nil)
 		sdl.SetLogPriorities(.WARN)
 
 	}
-	defer sdl.DestroyWindow(window)
+	when ODIN_DEBUG {
+		defer sdl.DestroyWindow(window)
+
+	}
 
 	// device = sdl.CreateGPUDevice({.SPIRV}, true, nil)
 	vulkan_init()
-	defer vulkan_cleanup()
+	when ODIN_DEBUG {
+		defer vulkan_cleanup()
+	}
 	// sdl_ensure(device != nil)
 	// defer sdl.DestroyGPUDevice(device)
 

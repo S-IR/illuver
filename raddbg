@@ -1,12 +1,14 @@
 // raddbg 0.9.24 project file
 
+recent_file: path: "src/chunks-visuals.odin"
 recent_file: path: "src/chunks.odin"
+recent_file: path: "../../../odin-compiler/base/runtime/core.odin"
+recent_file: path: "../../../odin-compiler/base/runtime/core_builtin.odin"
 recent_file: path: "../../../odin-compiler/core/fmt/fmt.odin"
 recent_file: path: "src/main.odin"
 recent_file: path: "src/algorithms/fbm.odin"
 recent_file: path: "src/biome_density.odin"
 recent_file: path: "src/vk_helpers.odin"
-recent_file: path: "../../../odin-compiler/base/runtime/core.odin"
 target:
 {
   executable: "build/debug.exe"
@@ -16,7 +18,7 @@ target:
 debug_info:
 {
   path: "D:/dev/odin/illuver/illuver/build/debug.pdb"
-  timestamp: 66207624762990
+  timestamp: 66212093829669
 }
 debug_info:
 {
@@ -27,4 +29,9 @@ debug_info:
 {
   path: "D:/utils/vulkansdk/Bin/VkLayer_khronos_validation.pdb"
   timestamp: 66200616706612
+}
+breakpoint:
+{
+  source_location: "src/chunks-visuals.odin:623:1"
+  hit_count: 0
 }

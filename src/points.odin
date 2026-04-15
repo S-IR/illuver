@@ -37,7 +37,7 @@ TYPE_MASK :: u16(1023)
 
 ENERGY_MASK :: u16(0b11)
 
-u16_to_point_type :: #force_inline proc(v: u16) -> PointType {
+u16_to_point_type :: #force_inline proc "contextless" (v: u16) -> PointType {
 	return PointType(v & TYPE_MASK)
 }
 
@@ -333,7 +333,7 @@ pipeline_data_delete :: proc(p: PipelineData) {
 // 	return visibles
 // }
 
-triangle_decide_color :: proc(points: [3]u16) -> [4]f32 {
+triangle_decide_color :: proc "contextless" (points: [3]u16) -> [4]f32 {
 	// for p in points do assert(is_valid_point_u16(p) && p != 0)
 
 	pointTypes: [3]PointType
@@ -363,7 +363,7 @@ triangle_decide_color :: proc(points: [3]u16) -> [4]f32 {
 
 	return {finalColor[0], finalColor[1], finalColor[2], 1}
 }
-energy_to_color :: #force_inline proc(p: u16) -> [3]f32 {
+energy_to_color :: proc "contextless" (p: u16) -> [3]f32 {
 	light := f32(get_light(p)) / 3.0
 	life := f32(get_life(p)) / 3.0
 	wisdom := f32(get_wisdom(p)) / 3.0
