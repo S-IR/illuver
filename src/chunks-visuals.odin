@@ -667,190 +667,278 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						}
 
 						// Inline neighbor point fetches
-						nx1 := x + 1;ny1 := y;nz1 := z
+						nx1 := x + 1; ny1 := y; nz1 := z
 						oneZeroZero :=
 							points[index_into_point_arrays(nx1, ny1, nz1)] if nx1 < VERTS_PER_X_DIR else 0
 
-						nx2 := x + 1;ny2 := y + 1;nz2 := z
+						nx2 := x + 1; ny2 := y + 1; nz2 := z
 						oneOneZero :=
 							points[index_into_point_arrays(nx2, ny2, nz2)] if nx2 < VERTS_PER_X_DIR && ny2 < VERTS_PER_Y_DIR else 0
 
-						nx3 := x;ny3 := y + 1;nz3 := z
+						nx3 := x; ny3 := y + 1; nz3 := z
 						zeroOneZero :=
 							points[index_into_point_arrays(nx3, ny3, nz3)] if ny3 < VERTS_PER_Y_DIR else 0
 
-						nx4 := x;ny4 := y;nz4 := z + 1
+						nx4 := x; ny4 := y; nz4 := z + 1
 						zeroZeroOne :=
 							points[index_into_point_arrays(nx4, ny4, nz4)] if nz4 < VERTS_PER_Z_DIR else 0
 
-						nx5 := x;ny5 := y + 1;nz5 := z + 1
+						nx5 := x; ny5 := y + 1; nz5 := z + 1
 						zeroOneOne :=
 							points[index_into_point_arrays(nx5, ny5, nz5)] if ny5 < VERTS_PER_Y_DIR && nz5 < VERTS_PER_Z_DIR else 0
 
-						nx6 := x + 1;ny6 := y;nz6 := z + 1
+						nx6 := x + 1; ny6 := y; nz6 := z + 1
 						oneZeroOne :=
 							points[index_into_point_arrays(nx6, ny6, nz6)] if nx6 < VERTS_PER_X_DIR && nz6 < VERTS_PER_Z_DIR else 0
 
-						emit_triangle :: #force_inline proc(
+						_process_vertex :: #force_inline proc(
 							mapper: []INDEX_TYPE_USED_IN_CHUNKS,
 							worldBase: [3]i32,
 							base: [3]i32,
-							v0, v1, v2: u16,
-							o0, o1, o2: [3]i32,
+							offset: [3]i32,
 							vertexArr: [][3]f32,
 							vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
-							indices: []INDEX_TYPE_USED_IN_CHUNKS,
-							staticIndicesLen: ^int,
-							colors: [][4]f32,
-							staticColorsLen: ^int,
-						) {
-							if v0 == 0 || v1 == 0 || v2 == 0 do return
-
-							idx0 := get_or_create_mapper_idx(
-								mapper,
-								worldBase + o0,
-								base + o0,
-								vertexArr,
-								vertexArrayLen,
-							)
-							idx1 := get_or_create_mapper_idx(
-								mapper,
-								worldBase + o1,
-								base + o1,
-								vertexArr,
-								vertexArrayLen,
-							)
-							idx2 := get_or_create_mapper_idx(
-								mapper,
-								worldBase + o2,
-								base + o2,
-								vertexArr,
-								vertexArrayLen,
-							)
+							seed: u64,
+						) -> INDEX_TYPE_USED_IN_CHUNKS {
 							#no_bounds_check {
-								i := staticIndicesLen^
-								indices[i + 0] = idx0
-								indices[i + 1] = idx1
-								indices[i + 2] = idx2
-								staticIndicesLen^ += 3
+								idxVal :=
+									(base.x + offset.x) * VERT_STRIDE_X +
+									(base.y + offset.y) * VERT_STRIDE_Y +
+									(base.z + offset.z)
+								if mapper[idxVal] != INVALID {
+									return mapper[idxVal]
+								}
+								wx := worldBase.x + offset.x
+								wy := worldBase.y + offset.y
+								wz := worldBase.z + offset.z
 
-								colors[staticColorsLen^] = triangle_decide_color({v0, v1, v2})
-								staticColorsLen^ += 1
+								jitter := calculate_jitter(wx, wy, wz, seed)
+								vertexArr[vertexArrayLen^] =
+									[3]f32{f32(wx), f32(wy), f32(wz)} + jitter
+								mapper[idxVal] = vertexArrayLen^
+								curr := vertexArrayLen^
+								vertexArrayLen^ += 1
+								return curr
 							}
 
 						}
 
-						// Unrolled triangle generation
-						// Front face (z=0)
-						emit_triangle(
-							mapper[:],
-							worldBase,
-							base,
-							pointVal,
-							oneZeroZero,
-							oneOneZero,
-							{0, 0, 0},
-							{1, 0, 0},
-							{1, 1, 0},
-							state.visiblePoints[:],
-							&staticVisiblePointsLen,
-							state.indices[:],
-							&staticIndicesLen,
-							state.colors[:],
-							&staticColorsLen,
-						)
-
-						emit_triangle(
-							mapper[:],
-							worldBase,
-							base,
-							pointVal,
-							oneOneZero,
-							zeroOneZero,
-							{0, 0, 0},
-							{1, 1, 0},
-							{0, 1, 0},
-							state.visiblePoints[:],
-							&staticVisiblePointsLen,
-							state.indices[:],
-							&staticIndicesLen,
-							state.colors[:],
-							&staticColorsLen,
-						)
-
-						// Left face (x=0)
-						emit_triangle(
-							mapper[:],
-							worldBase,
-							base,
-							pointVal,
-							zeroZeroOne,
-							zeroOneOne,
-							{0, 0, 0},
-							{0, 0, 1},
-							{0, 1, 1},
-							state.visiblePoints[:],
-							&staticVisiblePointsLen,
-							state.indices[:],
-							&staticIndicesLen,
-							state.colors[:],
-							&staticColorsLen,
-						)
-
-						emit_triangle(
-							mapper[:],
-							worldBase,
-							base,
-							pointVal,
-							zeroOneOne,
-							zeroOneZero,
-							{0, 0, 0},
-							{0, 1, 1},
-							{0, 1, 0},
-							state.visiblePoints[:],
-							&staticVisiblePointsLen,
-							state.indices[:],
-							&staticIndicesLen,
-							state.colors[:],
-							&staticColorsLen,
-						)
-
-						// Bottom face (y=0)
-						emit_triangle(
-							mapper[:],
-							worldBase,
-							base,
-							pointVal,
-							oneZeroZero,
-							oneZeroOne,
-							{0, 0, 0},
-							{1, 0, 0},
-							{1, 0, 1},
-							state.visiblePoints[:],
-							&staticVisiblePointsLen,
-							state.indices[:],
-							&staticIndicesLen,
-							state.colors[:],
-							&staticColorsLen,
-						)
-
-						emit_triangle(
-							mapper[:],
-							worldBase,
-							base,
-							pointVal,
-							oneZeroOne,
-							zeroZeroOne,
-							{0, 0, 0},
-							{1, 0, 1},
-							{0, 0, 1},
-							state.visiblePoints[:],
-							&staticVisiblePointsLen,
-							state.indices[:],
-							&staticIndicesLen,
-							state.colors[:],
-							&staticColorsLen,
-						)
+						if pointVal != 0 && oneZeroZero != 0 && oneOneZero != 0 {
+							i0 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i1 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{1, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i2 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{1, 1, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							idx := staticIndicesLen
+							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
+							staticIndicesLen += 3
+							colors[staticColorsLen] = triangle_decide_color(
+								{pointVal, oneZeroZero, oneOneZero},
+							)
+							staticColorsLen += 1
+						}
+						if pointVal != 0 && oneOneZero != 0 && zeroOneZero != 0 {
+							i0 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i1 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{1, 1, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i2 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 1, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							idx := staticIndicesLen
+							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
+							staticIndicesLen += 3
+							colors[staticColorsLen] = triangle_decide_color(
+								{pointVal, oneOneZero, zeroOneZero},
+							)
+							staticColorsLen += 1
+						}
+						if pointVal != 0 && zeroZeroOne != 0 && zeroOneOne != 0 {
+							i0 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i1 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 1},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i2 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 1, 1},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							idx := staticIndicesLen
+							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
+							staticIndicesLen += 3
+							colors[staticColorsLen] = triangle_decide_color(
+								{pointVal, zeroZeroOne, zeroOneOne},
+							)
+							staticColorsLen += 1
+						}
+						if pointVal != 0 && zeroOneOne != 0 && zeroOneZero != 0 {
+							i0 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i1 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 1, 1},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i2 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 1, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							idx := staticIndicesLen
+							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
+							staticIndicesLen += 3
+							colors[staticColorsLen] = triangle_decide_color(
+								{pointVal, zeroOneOne, zeroOneZero},
+							)
+							staticColorsLen += 1
+						}
+						if pointVal != 0 && oneZeroZero != 0 && oneZeroOne != 0 {
+							i0 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i1 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{1, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i2 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{1, 0, 1},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							idx := staticIndicesLen
+							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
+							staticIndicesLen += 3
+							colors[staticColorsLen] = triangle_decide_color(
+								{pointVal, oneZeroZero, oneZeroOne},
+							)
+							staticColorsLen += 1
+						}
+						if pointVal != 0 && oneZeroOne != 0 && zeroZeroOne != 0 {
+							i0 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 0},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i1 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{1, 0, 1},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							i2 := _process_vertex(
+								mapper[:],
+								worldBase,
+								base,
+								{0, 0, 1},
+								visible[:],
+								&staticVisiblePointsLen,
+								seed,
+							)
+							idx := staticIndicesLen
+							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
+							staticIndicesLen += 3
+							colors[staticColorsLen] = triangle_decide_color(
+								{pointVal, oneZeroOne, zeroZeroOne},
+							)
+							staticColorsLen += 1
+						}
 
 					}
 				}
@@ -976,23 +1064,12 @@ point_real_world_position :: #force_inline proc "contextless" (worldXYZ: [3]f32)
 	// return worldXYZ
 	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), seed)
 }
-calculate_jitter :: proc "contextless" (x, y, z: i32, seed: u64) -> [3]f32 {
-	ux := u64(x)
-	uy := u64(y)
-	uz := u64(z)
-	h := ux * 73856093 + uy * 19349663 + uz * 83492791 + seed
-	h = (h ~ (h >> 13)) * 0x27d4eb2d
-	h = (h ~ (h >> 15)) * 0x85ebca6b
-	h = h ~ (h >> 16)
-	fx := f32((h) & 0xFFFF) / 65536.0 - 0.5
-	fy := f32((h >> 16) & 0xFFFF) / 65536.0 - 0.5
-	fz := f32((h >> 32) & 0xFFFF) / 65536.0 - 0.5
-
-
-	// assert(fx < .5)
-	// assert(fy < .5)
-	// assert(fz < .5)
-
+calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -> [3]f32 {
+	h := u32(x) * 0x9e3779b9 + u32(y) * 0x85ebca6b + u32(z) * 0x27d4eb2d + u32(seed)
+	h = (h ~ (h >> 13)) * 0x9e3779b9
+	fx := f32(h & 0xFFFF) * (1.0 / 65536.0) - 0.5
+	fy := f32((h >> 16) & 0xFFFF) * (1.0 / 65536.0) - 0.5
+	fz := f32((h >> 24) & 0xFF) * (1.0 / 256.0) - 0.5
 	return {fx, fy, fz}
 }
 
