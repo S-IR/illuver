@@ -43,7 +43,7 @@ CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 
 NUM_WORKER_THREADS := 4
 Chunk :: struct {
-	points:       [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]PointType,
+	points:       [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
 	heightMap:    [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]i32,
 	buffers:      struct {
 		pointsBuffer: [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem,
@@ -63,9 +63,12 @@ Chunk :: struct {
 // 	return c.points[x * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR + y * CUBES_PER_Z_DIR + z]
 // }
 
-CHUNKS_PER_DIRECTION :: 10
+CHUNKS_PER_DIRECTION :: 5
 
+ENERGY_TICKING_DIRECTION_LEN :: CHUNKS_PER_DIRECTION
 Chunks := [CHUNKS_PER_DIRECTION][CHUNKS_PER_DIRECTION]Chunk{}
+
+ChunkPrevEnergyCache: [dynamic]u16
 CHUNK_MIDDLE_X_INDEX :: (CHUNKS_PER_DIRECTION / 2)
 CHUNK_MIDDLE_Z_INDEX :: (CHUNKS_PER_DIRECTION / 2)
 
@@ -110,17 +113,50 @@ chunks_init :: proc(c: ^Camera) {
 	sync.wait(&chunkWorkersWG)
 
 	ChunkAtTheCenter = Chunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX].pos
+
+	ChunkPrevEnergyCache = make(
+		[dynamic]u16,
+		ENERGY_TICKING_DIRECTION_LEN * ENERGY_TICKING_DIRECTION_LEN * MAX_POINTS,
+		WorldAllocator,
+	)
+
 }
 
+energy_tick :: proc(energyTickType: bit_set[EnergyType]) {
 
+
+	mem.zero(raw_data(ChunkPrevEnergyCache), size_of(ChunkPrevEnergyCache))
+	for &chunkRow, x in Chunks {
+		for &chunk, z in chunkRow {
+			start := index_into_energy_cache(x, z)
+			// ensure((start + int(MAX_POINTS)) < len(ChunkPrevEnergyCache))
+			assert(start >= 0)
+			assert(int(start) + len(chunk.points) <= len(ChunkPrevEnergyCache))
+
+			ptrStart := mem.ptr_offset(raw_data(ChunkPrevEnergyCache), start)
+			mem.copy(
+				ptrStart,
+				raw_data(chunk.points[:]),
+				len(chunk.points) * size_of(chunk.points[0]),
+			)
+
+			// ChunkPrevEnergyCache[start:start + MAX_POINTS] = chunk.points
+			// ChunkPrevEnergyCache[x * CHUNKS_PER_DIRECTION + z * MAX_POINTS]
+		}
+	}
+
+	for &chunkRow, x in Chunks {
+		for &chunk, z in chunkRow {
+			chunk_energy_tick_add_thread(x, z, energyTickType)
+		}
+	}
+}
 VERT_STRIDE_X :: VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
 VERT_STRIDE_Y :: VERTS_PER_Z_DIR
 index_into_point_arrays_scalars :: #force_inline proc "contextless" (x, y, z: i32) -> i32 {
 	return x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
 }
 index_into_point_arrays_vector :: #force_inline proc "contextless" (v: [3]i32) -> i32 {
-	VERT_STRIDE_X :: VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
-	VERT_STRIDE_Y :: VERTS_PER_Z_DIR
 	return v.x * VERT_STRIDE_X + v.y * VERT_STRIDE_Y + v.z
 }
 index_into_point_arrays :: proc {
@@ -128,6 +164,8 @@ index_into_point_arrays :: proc {
 	index_into_point_arrays_vector,
 }
 MAX_POINTS :: VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
+MAX_POINTS_INT :: int(MAX_POINTS)
+
 MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
 MAX_COLORS :: MAX_INDICES
 INDEX_TYPE_USED_IN_CHUNKS :: u32
@@ -476,14 +514,14 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					worldZ := pos[1] + z
 					biomeWeights := get_biome_weights(worldX, worldZ, seed)
 					height: i32 = 0
-					// for weight, biome in biomeWeights {
-					// 	if weight < MIN_BIOME_WEIGHT_TO_NOT_IGNORE do continue
-					// 	height += i32(
-					// 		biome_height(biome, worldX, worldZ, seed) * (f32(weight) * inv255),
-					// 	)
-					// 	height = math.clamp(height, MIN_Y + 1, MAX_Y - 1)
-					// }
-					height = 0
+					for weight, biome in biomeWeights {
+						if weight < MIN_BIOME_WEIGHT_TO_NOT_IGNORE do continue
+						height += i32(
+							biome_height(biome, worldX, worldZ, seed) * (f32(weight) * inv255),
+						)
+						height = math.clamp(height, MIN_Y + 1, MAX_Y - 1)
+					}
+					// height = 0
 					assert(height >= MIN_Y)
 					// isCrystalblooomArr[x * VERTS_PER_Z_DIR + z] =
 					// 	biomeWeights[.Crystalbloom] > BIOME_THRESHOLD
@@ -493,7 +531,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						y := yCoord - MIN_Y
 						idx := index_into_point_arrays(x, y, z)
 						worldXYZ := [3]i32{worldX, yCoord, worldZ}
-						pointType := procedural_point_type(
+						pointVal := procedural_point_type(
 							biomeWeights,
 							worldXYZ.x,
 							worldXYZ.y,
@@ -501,8 +539,8 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							height,
 							seed,
 						)
-
-						chunk.points[idx] = pointType
+						assert(is_valid_point_u16(pointVal))
+						chunk.points[idx] = pointVal
 
 					}
 				}
@@ -532,6 +570,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk_create_gpu_geometry(chunk, state)
 
 	}
+	INVALID :: u32(0xFFFFFFFF)
 
 	chunk_create_gpu_geometry :: proc(chunk: ^Chunk, state: ^ChunkWorkerState) {
 		pos := state.pos
@@ -540,25 +579,35 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		staticIndicesLen: int = 0
 		staticColorsLen: int = 0
 
-		// staticBarycentricsLen: int = 0
+		visible := &state.visiblePoints
+		indices := &state.indices
+		colors := &state.colors
+
+
+		points := &chunk.points
+		mapper := &state.vertexMapper
 
 		{
 			tracy.Zone()
+			mem.set(mapper, 0xFF, len(mapper) * size_of(mapper[0]))
+		}
 
+		airSimd := #simd[8]u16 {
+			u16(PointType.Air),
+			u16(PointType.Air),
+			u16(PointType.Air),
+			u16(PointType.Air),
+			u16(PointType.Air),
+			u16(PointType.Air),
+			u16(PointType.Air),
+			u16(PointType.Air),
+		}
 
-			airSimd := #simd[8]u16 {
-				u16(PointType.Air),
-				u16(PointType.Air),
-				u16(PointType.Air),
-				u16(PointType.Air),
-				u16(PointType.Air),
-				u16(PointType.Air),
-				u16(PointType.Air),
-				u16(PointType.Air),
-			}
+		// staticBarycentricsLen: int = 0
+		// worldBase := [3]i32{state.pos.x, 0, state.pos[1]}
+		#no_bounds_check {
+			tracy.Zone()
 
-			points := &chunk.points
-			mapper := &state.vertexMapper
 
 			for x: i32 = 0; x < VERTS_PER_X_DIR - 1; x += 1 {
 				worldX := pos[0] + x
@@ -572,8 +621,8 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 					for y: i32 = 0; y <= height - MIN_Y; y += 1 {
 						baseIndex := x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
-						pointType := points[baseIndex]
-						if pointType == .Air do continue
+						pointVal := points[baseIndex]
+						if pointVal == 0 do continue
 
 						isEdgeY := y == 0 || y == height - MIN_Y - 1
 						isChunkEdge := isEdgeX || isEdgeY || isEdgeZ
@@ -611,8 +660,8 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 									break
 								}
 							}
-							isSurrounded &= points[baseIndex + pointsNeighbourLeftCoords] != .Air
-							isSurrounded &= points[baseIndex + pointsNeighbourRightCoords] != .Air
+							isSurrounded &= points[baseIndex + pointsNeighbourLeftCoords] != 0
+							isSurrounded &= points[baseIndex + pointsNeighbourRightCoords] != 0
 							if isSurrounded do continue
 
 						}
@@ -627,48 +676,48 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						oneZeroOne := get_point_type(base, {1, 0, 1}, chunk.points[:])
 
 						PointTypePlusOffset :: struct {
-							t: PointType,
+							v: u16,
 							o: [3]i32,
 						}
 						possibleTriangles := [?][3]PointTypePlusOffset {
 							[3]PointTypePlusOffset {
-								{pointType, {0, 0, 0}},
+								{pointVal, {0, 0, 0}},
 								{oneZeroZero, {1, 0, 0}},
 								{oneOneZero, {1, 1, 0}},
 							},
 							[3]PointTypePlusOffset {
-								{pointType, {0, 0, 0}},
+								{pointVal, {0, 0, 0}},
 								{oneOneZero, {1, 1, 0}},
 								{zeroOneZero, {0, 1, 0}},
 							},
 							[3]PointTypePlusOffset {
-								{pointType, {0, 0, 0}},
+								{pointVal, {0, 0, 0}},
 								{zeroZeroOne, {0, 0, 1}},
 								{zeroOneOne, {0, 1, 1}},
 							},
 							[3]PointTypePlusOffset {
-								{pointType, {0, 0, 0}},
+								{pointVal, {0, 0, 0}},
 								{zeroOneOne, {0, 1, 1}},
 								{zeroOneZero, {0, 1, 0}},
 							},
 							[3]PointTypePlusOffset {
-								{pointType, {0, 0, 0}},
+								{pointVal, {0, 0, 0}},
 								{oneZeroZero, {1, 0, 0}},
 								{oneZeroOne, {1, 0, 1}},
 							},
 							[3]PointTypePlusOffset {
-								{pointType, {0, 0, 0}},
+								{pointVal, {0, 0, 0}},
 								{oneZeroOne, {1, 0, 1}},
 								{zeroZeroOne, {0, 0, 1}},
 							},
 						}
 						possibleTrianglesLoop: for possibleTriangle, i in possibleTriangles {
 							for pPlusOffset in possibleTriangle {
-								if pPlusOffset.t == .Air do continue possibleTrianglesLoop
+								if pPlusOffset.v == 0 do continue possibleTrianglesLoop
 							}
-							p0 := possibleTriangle[0].t
-							p1 := possibleTriangle[1].t
-							p2 := possibleTriangle[2].t
+							p0 := possibleTriangle[0].v
+							p1 := possibleTriangle[1].v
+							p2 := possibleTriangle[2].v
 
 							p0WorldCoord := worldBase + possibleTriangle[0].o
 							p0Idx := get_or_create_mapper_idx(
@@ -706,11 +755,10 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							staticIndicesLen += 3
 							state.colors[staticColorsLen] = triangle_decide_color(
 								{
-									possibleTriangle[0].t,
-									possibleTriangle[1].t,
-									possibleTriangle[2].t,
+									possibleTriangle[0].v,
+									possibleTriangle[1].v,
+									possibleTriangle[2].v,
 								},
-								{p0WorldCoord, p1WorldCoord, p2WorldCoord},
 							)
 							staticColorsLen += 1
 
@@ -718,8 +766,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 					}
 				}
-			}
-		}
+			}}
 
 		assert(staticVisiblePointsLen > 0)
 		assert(staticIndicesLen > 0)
@@ -781,36 +828,46 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		}
 	}
 }
-get_point_type :: proc(base: [3]i32, offset: [3]i32, points: []PointType) -> PointType {
+get_point_type :: proc "contextless" (base: [3]i32, offset: [3]i32, points: []u16) -> u16 {
 	finalCoord := base + offset
 
-	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return .Air
-	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return .Air
-	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return .Air
+	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return 0
+	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return 0
+	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return 0
+
+	index := index_into_point_arrays(finalCoord)
+	#no_bounds_check {
+		return points[index]
+	}
+}
+
+get_offset_point_type_bounds_checked :: proc(base: [3]i32, offset: [3]i32, points: []u16) -> u16 {
+	finalCoord := base + offset
+
+	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return 0
+	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return 0
+	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return 0
 
 	index := index_into_point_arrays(finalCoord)
 	return points[index]
 }
-get_or_create_mapper_idx :: proc(
-	mapper: []Maybe(INDEX_TYPE_USED_IN_CHUNKS),
+get_or_create_mapper_idx :: proc "contextless" (
+	mapper: []INDEX_TYPE_USED_IN_CHUNKS,
 	worldCoord: [3]i32,
 	idx: [3]i32,
 	vertexArr: [][3]f32,
 	vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
 ) -> INDEX_TYPE_USED_IN_CHUNKS {
-	assert(len(mapper) > 0)
-	assert(idx[0] >= 0 && idx[0] < VERTS_PER_X_DIR)
-	assert(idx[1] >= 0 && idx[1] < VERTS_PER_Y_DIR)
-	assert(idx[2] >= 0 && idx[2] < VERTS_PER_Z_DIR)
-	assert(len(vertexArr) > 0)
-	assert(vertexArrayLen != nil)
+	// assert(len(mapper) > 0)
+	// assert(idx[0] >= 0 && idx[0] < VERTS_PER_X_DIR)
+	// assert(idx[1] >= 0 && idx[1] < VERTS_PER_Y_DIR)
+	// assert(idx[2] >= 0 && idx[2] < VERTS_PER_Z_DIR)
+	// assert(len(vertexArr) > 0)
+	// assert(vertexArrayLen != nil)
 
-
-	idxAsValue := index_into_point_arrays(idx)
-	switch v in mapper[idxAsValue] {
-	case u32:
-		return v
-	case:
+	#no_bounds_check {
+		idxAsValue := index_into_point_arrays(idx)
+		if mapper[idxAsValue] != INVALID do return mapper[idxAsValue]
 		finalCoord := point_real_world_position(
 			[3]f32{f32(worldCoord.x), f32(worldCoord.y), f32(worldCoord.z)},
 		)
@@ -819,14 +876,15 @@ get_or_create_mapper_idx :: proc(
 		currIdx := vertexArrayLen^
 		vertexArrayLen^ += 1
 		return currIdx
+
 	}
 
 }
-point_real_world_position :: proc(worldXYZ: [3]f32) -> [3]f32 {
-	return worldXYZ
-	// return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), seed)
+point_real_world_position :: #force_inline proc "contextless" (worldXYZ: [3]f32) -> [3]f32 {
+	// return worldXYZ
+	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), seed)
 }
-calculate_jitter :: proc(x, y, z: i32, seed: u64) -> [3]f32 {
+calculate_jitter :: proc "contextless" (x, y, z: i32, seed: u64) -> [3]f32 {
 	ux := u64(x)
 	uy := u64(y)
 	uz := u64(z)
@@ -839,9 +897,9 @@ calculate_jitter :: proc(x, y, z: i32, seed: u64) -> [3]f32 {
 	fz := f32((h >> 32) & 0xFFFF) / 65536.0 - 0.5
 
 
-	assert(fx < .5)
-	assert(fy < .5)
-	assert(fz < .5)
+	// assert(fx < .5)
+	// assert(fy < .5)
+	// assert(fz < .5)
 
 	return {fx, fy, fz}
 }

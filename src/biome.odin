@@ -80,7 +80,7 @@ when !VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		x, y, z: i32,
 		topY: i32,
 		seed: u64,
-	) -> PointType {
+	) -> u16 {
 		selector := get_biome_selector(x, y, z, seed)
 		cumulator: f32 = 0
 		for weight, biome in weights {
@@ -88,10 +88,10 @@ when !VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 			prob := f32(weight) * inv255
 			cumulator += prob
 			if selector < cumulator {
-				return biome_point_type(biome, x, y, z, topY, seed)
+				return biome_point(biome, x, y, z, topY, seed)
 			}
 		}
-		return .Air
+		return 0
 	}
 }
 

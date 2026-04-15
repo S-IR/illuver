@@ -1,9 +1,14 @@
+
 package main
+import "../modules/tracy"
+import "base:intrinsics"
 import "core:fmt"
+import "core:math"
+import "core:simd"
 import "core:sync"
 import "core:thread"
 ChunkWorkerState :: struct {
-	vertexMapper:  [MAX_POINTS]Maybe(INDEX_TYPE_USED_IN_CHUNKS),
+	vertexMapper:  [MAX_POINTS]INDEX_TYPE_USED_IN_CHUNKS,
 	visiblePoints: [MAX_POINTS][3]f32,
 	colors:        [MAX_COLORS][4]f32,
 	indices:       [MAX_INDICES]INDEX_TYPE_USED_IN_CHUNKS,
@@ -16,20 +21,28 @@ chunkWorkersWG: sync.Wait_Group
 
 chunkWorkerThreads: [dynamic]^thread.Thread
 
-ChunkJobType :: enum {
-	Init,
-	Update,
-	PointEdit,
-}
 
+EditUpdateJob :: struct {
+	x, y, z:      i32,
+	newPointType: u16,
+}
+EnergyTickJob :: struct {
+	chunkX, chunkZ: int,
+	energyTickType: bit_set[EnergyType],
+}
+UpdateJob :: struct {}
+InitJob :: struct {}
+
+ChunkJobType :: union {
+	EditUpdateJob,
+	UpdateJob,
+	InitJob,
+	EnergyTickJob,
+}
 ChunkJob :: struct {
 	xIdx, zIdx: int,
 	pos:        [2]i32,
 	type:       ChunkJobType,
-	edit:       struct {
-		x, y, z:      i32,
-		newPointType: PointType,
-	},
 }
 
 chunkJobQueue: [dynamic]ChunkJob
@@ -58,45 +71,143 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 
 		chunk := &Chunks[state.xIdx][state.zIdx]
 		jobTypeStr, _ := fmt.enum_value_to_string(job.type)
-		switch job.type {
-		case .Init:
-			chunk_init(state)
-		case .Update:
-			state.vertexMapper = {}
-			chunk_create_gpu_geometry(chunk, state)
-		case .PointEdit:
-			chunk.points[index_into_point_arrays(job.edit.x, job.edit.y, job.edit.z)] =
-				job.edit.newPointType
 
-			heightMapIdx := job.edit.x * VERTS_PER_Z_DIR + job.edit.z
-			if job.edit.newPointType == .Air {
-				if chunk.heightMap[heightMapIdx] == job.edit.y + MIN_Y {
-					currY := job.edit.y - 1
+		switch v in job.type {
+		case EnergyTickJob:
+			tracy.Zone()
+			startX: i32 = 0
+			endX := i32(VERTS_PER_X_DIR)
+			startZ: i32 = 0
+			endZ := i32(VERTS_PER_Z_DIR)
+
+			for x in startX ..< endX {
+				for z in startZ ..< endZ {
+					energyTickIteration: for yHeight in (MIN_Y +
+						1) ..< math.min(chunk.heightMap[x * VERTS_PER_Z_DIR + z], MAX_Y - 1) {
+						y := i32(yHeight - MIN_Y)
+						baseIdx := index_into_point_arrays([3]i32{x, y, z})
+
+						point, isWorldEdge := energy_cache_get(state.xIdx, state.zIdx, x, y, z)
+						if isWorldEdge do continue energyTickIteration
+
+						neighbors: [6]u16
+						neighbors[0], _ = energy_cache_get(state.xIdx, state.zIdx, x - 1, y, z) // left
+						neighbors[1], _ = energy_cache_get(state.xIdx, state.zIdx, x + 1, y, z) // right
+						neighbors[2], _ = energy_cache_get(state.xIdx, state.zIdx, x, y - 1, z) // down
+						neighbors[3], _ = energy_cache_get(state.xIdx, state.zIdx, x, y + 1, z) // up
+						neighbors[4], _ = energy_cache_get(state.xIdx, state.zIdx, x, y, z - 1) // back
+						neighbors[5], _ = energy_cache_get(state.xIdx, state.zIdx, x, y, z + 1) // front
+
+						chunk.points[baseIdx] = point_tick_energy(
+							point,
+							neighbors,
+							v.energyTickType,
+						)
+					}
+				}
+			}
+
+			chunk_create_gpu_geometry(chunk, state)
+		case InitJob:
+			chunk_init(state)
+		case UpdateJob:
+			chunk_create_gpu_geometry(chunk, state)
+		case EditUpdateJob:
+			chunk.points[index_into_point_arrays(v.x, v.y, v.z)] = v.newPointType
+
+			heightMapIdx := v.x * VERTS_PER_Z_DIR + v.z
+			if u16_to_point_type(v.newPointType) == .Air {
+				if chunk.heightMap[heightMapIdx] == v.y + MIN_Y {
+					currY := v.y - 1
 					for currY > 0 &&
-					    chunk.points[index_into_point_arrays(job.edit.x, currY, job.edit.z)] ==
+					    u16_to_point_type(
+						    chunk.points[index_into_point_arrays(v.x, currY, v.z)],
+					    ) ==
 						    .Air {
 						currY -= 1
 					}
 					chunk.heightMap[heightMapIdx] = currY + MIN_Y
 				}
 			} else {
-				if job.edit.y + MIN_Y > chunk.heightMap[heightMapIdx] {
-					chunk.heightMap[heightMapIdx] = job.edit.y + MIN_Y
+				if v.y + MIN_Y > chunk.heightMap[heightMapIdx] {
+					chunk.heightMap[heightMapIdx] = v.y + MIN_Y
 				}
 			}
-			state.vertexMapper = {}
 			chunk_create_gpu_geometry(chunk, state)
 		}
 
 		sync.wait_group_done(&chunkWorkersWG)
 	}
 }
+index_into_energy_cache :: #force_inline proc "contextless" (x, z: int) -> i32 {
 
+	chunkIndexIntoEnergyCacheInt := (x * ENERGY_TICKING_DIRECTION_LEN + z) * MAX_POINTS_INT
+
+
+	// when ODIN_DEBUG {
+	// 	a, of1 := intrinsics.overflow_mul(x, ENERGY_TICKING_DIRECTION_LEN)
+	// 	b, of2 := intrinsics.overflow_mul(a, MAX_POINTS_INT)
+	// 	c, of3 := intrinsics.overflow_mul(z, MAX_POINTS_INT)
+	// 	res, of4 := intrinsics.overflow_add(b, c)
+
+	// 	assert(!of1 && !of2 && !of3 && !of4)
+	// 	assert(chunkIndexIntoEnergyCacheInt < int(max(i32)))
+
+	// 	// assert(res >= 0)
+	// }
+
+	chunkIndexIntoEnergyCache := i32(chunkIndexIntoEnergyCacheInt)
+
+
+	return chunkIndexIntoEnergyCache
+}
+// Wraps ChunkPrevEnergyCache access, handling cross-chunk boundaries transparently.
+// chunkX, chunkZ: the "home" chunk indices
+// localX, localY, localZ: point coords relative to home chunk (can be -1 or VERTS_PER_X_DIR etc.)
+// returns (value, ok) - ok=false means it's a world edge, treat as 0 or skip
+energy_cache_get :: #force_inline proc "contextless" (
+	chunkX, chunkZ: int,
+	localX, localY, localZ: i32,
+) -> (
+	res: u16,
+	isWorldEdge: bool,
+) {
+	cx := chunkX
+	lx := localX
+	cz := chunkZ
+	lz := localZ
+
+	if lx < 0 {
+		cx -= 1
+		lx = VERTS_PER_X_DIR - 1 + lx + 1
+		if cx < 0 do return 0, true
+	} else if lx >= VERTS_PER_X_DIR {
+		cx += 1
+		lx = lx - VERTS_PER_X_DIR
+		if cx >= ENERGY_TICKING_DIRECTION_LEN do return 0, true
+	}
+
+	// Handle Z overflow
+	if lz < 0 {
+		cz -= 1
+		lz = VERTS_PER_Z_DIR - 1 + lz + 1
+		if cz < 0 do return 0, true
+	} else if lz >= VERTS_PER_Z_DIR {
+		cz += 1
+		lz = lz - VERTS_PER_Z_DIR
+		if cz >= ENERGY_TICKING_DIRECTION_LEN do return 0, true
+	}
+
+	baseChunk := index_into_energy_cache(cx, cz)
+	idx := baseChunk + index_into_point_arrays([3]i32{lx, localY, lz})
+	return ChunkPrevEnergyCache[idx], false
+}
 chunk_init_add_thread :: proc(xIdx, zIdx: int, pos: [2]i32) {
 	job := ChunkJob {
 		xIdx = xIdx,
 		zIdx = zIdx,
 		pos  = pos,
+		type = InitJob{},
 	}
 	sync.mutex_lock(&chunkJobMutex)
 	append(&chunkJobQueue, job)
@@ -111,7 +222,7 @@ chunk_update_add_thread :: proc(xIdx, zIdx: int) {
 		xIdx = xIdx,
 		zIdx = zIdx,
 		pos  = Chunks[xIdx][zIdx].pos,
-		type = .Update,
+		type = UpdateJob{},
 	}
 	sync.mutex_lock(&chunkJobMutex)
 	append(&chunkJobQueue, job)
@@ -120,21 +231,31 @@ chunk_update_add_thread :: proc(xIdx, zIdx: int) {
 	sync.sema_post(&chunkJobSema)
 
 }
-chunk_point_edit_add_thread :: proc(
-	xIdx, zIdx: int,
-	indexX, indexY, indexZ: i32,
-	newType: PointType,
-) {
+chunk_point_edit_add_thread :: proc(xIdx, zIdx: int, indexX, indexY, indexZ: i32, newType: u16) {
 	job := ChunkJob {
 		xIdx = xIdx,
 		zIdx = zIdx,
 		pos = Chunks[xIdx][zIdx].pos,
-		type = .PointEdit,
-		edit = {x = indexX, y = indexY, z = indexZ, newPointType = newType},
+		type = EditUpdateJob{x = indexX, y = indexY, z = indexZ, newPointType = newType},
 	}
 	sync.mutex_lock(&chunkJobMutex)
 	append(&chunkJobQueue, job)
 	sync.mutex_unlock(&chunkJobMutex)
 	sync.wait_group_add(&chunkWorkersWG, 1)
 	sync.sema_post(&chunkJobSema)
+}
+chunk_energy_tick_add_thread :: proc(xIdx, zIdx: int, energyTickType: bit_set[EnergyType]) {
+	job := ChunkJob {
+		xIdx = xIdx,
+		zIdx = zIdx,
+		pos = Chunks[xIdx][zIdx].pos,
+		type = EnergyTickJob{energyTickType = energyTickType},
+	}
+
+	sync.mutex_lock(&chunkJobMutex)
+	append(&chunkJobQueue, job)
+	sync.mutex_unlock(&chunkJobMutex)
+	sync.wait_group_add(&chunkWorkersWG, 1)
+	sync.sema_post(&chunkJobSema)
+
 }

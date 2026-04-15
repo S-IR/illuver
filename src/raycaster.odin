@@ -10,7 +10,7 @@ raycast_get_viewed_point :: proc(
 	origin: [3]f32,
 	rayDir: [3]f32,
 ) -> (
-	closestPoint: PointType,
+	closestPoint: u16,
 	closestPointPosition: [3]f32,
 	found: bool,
 ) {
@@ -143,7 +143,7 @@ raycast_get_viewed_point :: proc(
 						when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							if point == 0.0 do continue
 						} else {
-							if point == .Air do continue
+							if point == 0 do continue
 						}
 
 						t := simd.extract(distanceAlongViewSimd, l)

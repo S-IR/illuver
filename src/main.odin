@@ -24,7 +24,7 @@ float2 :: [2]f32
 float3 :: [3]f32
 float4 :: [4]f32
 
-ENABLE_SPALL :: true && ODIN_DEBUG
+ENABLE_SPALL :: false && ODIN_DEBUG
 VISUAL_REPRESENTATION_OF_NOISE_FN_RUN :: false && ODIN_DEBUG
 VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_2D :: true && VISUAL_REPRESENTATION_OF_NOISE_FN_RUN
 
@@ -118,6 +118,10 @@ main :: proc() {
 
 
 	chunks_init(&camera)
+	energyTickNow := time.tick_now()
+	LastLifeTick = energyTickNow
+	LastWisdomTick = energyTickNow
+	LastLightTick = energyTickNow
 	defer chunks_destroy()
 
 
@@ -211,11 +215,40 @@ main :: proc() {
 		}
 		vulkan_update_swapchain()
 
+		ticksToDo: bit_set[EnergyType] = {}
+		if time.tick_since(LastLifeTick) >= LifeInterval {
+			ticksToDo += {.Life}
+			// energy_tick({.Life})
+		}
+
+		if time.tick_since(LastWisdomTick) >= WisdomInterval {
+			ticksToDo += {.Wisdom}
+			// energy_tick({.Wisdom})
+		}
+
+		if time.tick_since(LastLightTick) >= LightInterval {
+			ticksToDo += {.Light}
+
+			// energy_tick({.Light})
+		}
+		if ticksToDo != {} {
+			energy_tick(ticksToDo)
+			if .Light in ticksToDo {
+				LastLightTick = time.tick_now()
+			}
+			if .Wisdom in ticksToDo {
+				LastWisdomTick = time.tick_now()
+			}
+			if .Life in ticksToDo {
+				LastLifeTick = time.tick_now()
+			}
+		}
+
 		camera_process_keyboard_movement(&camera)
 
 		chunks_frame_update(&camera)
 		// chunks_shift_per_player_movement(&camera)
-		fmt.println("camera pos", camera.pos)
+		// fmt.println("camera pos", camera.pos)
 		view, proj := Camera_view_proj(&camera)
 		cameraPtr: rawptr
 		vma.map_memory(vkAllocator, cameraBuffers[vkFrameIndex].alloc, &cameraPtr)
@@ -242,7 +275,7 @@ main :: proc() {
 			camera.front,
 		)
 		if raycastDidHappen && didLeftClickThisFrame {
-			chunk_set_point(raycastPointPos, .Air)
+			chunk_set_point(raycastPointPos, u16(PointType.Air))
 		}
 		// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 

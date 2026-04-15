@@ -19,7 +19,7 @@ import "core:thread"
 import vk "vendor:vulkan"
 
 
-chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool) {
+chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool) {
 
 	for x in 0 ..< CHUNKS_PER_DIRECTION {
 		for z in 0 ..< CHUNKS_PER_DIRECTION {

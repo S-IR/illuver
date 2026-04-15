@@ -14,13 +14,73 @@ Point_r: struct {
 	pipeline: ^sdl.GPUGraphicsPipeline,
 } = {}
 
+is_valid_point_u16 :: #force_inline proc "contextless" (p: u16) -> bool {
+	typeBits := p & TYPE_MASK
 
+	if typeBits >= u16(len(PointType)) {
+		return false
+	} else {
+		return true
+	}
+
+
+}
 // BottomFacedVertices := [4]float3 {
 //     {-0.5, -0.5, 0.5},
 //     {-0.5, -0.5, -0.5},
 //     {0.5, -0.5, -0.5},
 //     {0.5, -0.5, 0.5},
 // }
+//
+//
+TYPE_MASK :: u16(1023)
+
+ENERGY_MASK :: u16(0b11)
+
+u16_to_point_type :: #force_inline proc(v: u16) -> PointType {
+	return PointType(v & TYPE_MASK)
+}
+
+LIGHT_SHIFT :: 10
+LIFE_SHIFT :: 12
+WISDOM_SHIFT :: 14
+LIFE_MASK :: u16(0x3)
+LIGHT_MASK :: u16(0x3)
+WISDOM_MASK :: u16(0x3)
+
+
+get_light :: #force_inline proc "contextless" (p: u16) -> u16 {return(
+		(p >> LIGHT_SHIFT) &
+		ENERGY_MASK \
+	)}
+get_life :: #force_inline proc "contextless" (p: u16) -> u16 {return(
+		(p >> LIFE_SHIFT) &
+		ENERGY_MASK \
+	)}
+get_wisdom :: #force_inline proc "contextless" (p: u16) -> u16 {return(
+		(p >> WISDOM_SHIFT) &
+		ENERGY_MASK \
+	)}
+
+set_light :: #force_inline proc(p: u16, v: u16) -> u16 {return(
+		(p & ~(ENERGY_MASK << LIGHT_SHIFT)) |
+		((v & ENERGY_MASK) << LIGHT_SHIFT) \
+	)}
+set_life :: #force_inline proc(p: u16, v: u16) -> u16 {return(
+		(p & ~(ENERGY_MASK << LIFE_SHIFT)) |
+		((v & ENERGY_MASK) << LIFE_SHIFT) \
+	)}
+set_wisdom :: #force_inline proc(p: u16, v: u16) -> u16 {return(
+		(p & ~(ENERGY_MASK << WISDOM_SHIFT)) |
+		((v & ENERGY_MASK) << WISDOM_SHIFT) \
+	)}
+
+EnergyType :: enum {
+	Light,
+	Life,
+	Wisdom,
+}
+
 when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	PointType :: f32
 } else {
@@ -35,24 +95,12 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		WhiteTreeLeaf,
 		Water,
 	}
+	#assert(len(PointType) < 1024)
 
-
-	Random_Colors_Per_Point_Type := [PointType][5][4]f32 {
-		.Air               = {{}, {}, {}, {}, {}},
-		.YellowDirt        = {
-			{159.0 / 255.0, 112.0 / 255.0, 75.0 / 255.0, 1},
-			{154.0 / 255.0, 107.0 / 255.0, 70.0 / 255.0, 1},
-			{157.0 / 255.0, 110.0 / 255.0, 73.0 / 255.0, 1},
-			{153.0 / 255.0, 106.0 / 255.0, 69.0 / 255.0, 1},
-			{155.0 / 255.0, 108.0 / 255.0, 71.0 / 255.0, 1},
-		},
-		.PurpleGround      = {
-			{36.0 / 255.0, 19.0 / 255.0, 97.0 / 255.0, 1},
-			{33.0 / 255.0, 16.0 / 255.0, 94.0 / 255.0, 1},
-			{31.0 / 255.0, 14.0 / 255.0, 92.0 / 255.0, 1},
-			{28.0 / 255.0, 11.0 / 255.0, 89.0 / 255.0, 1},
-			{34.0 / 255.0, 17.0 / 255.0, 95.0 / 255.0, 1},
-		},
+	Random_Colors_Per_Point_Type := [PointType][4]f32 {
+		.Air               = {},
+		.YellowDirt        = {159.0 / 255.0, 112.0 / 255.0, 75.0 / 255.0, 1},
+		.PurpleGround      = {36.0 / 255.0, 19.0 / 255.0, 97.0 / 255.0, 1},
 		// .LightPurpleGround = {
 		// 	{0, 0, 0, 1},
 		// 	{0, 1, 0, 1},
@@ -60,48 +108,12 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		// 	{1, 1, 0, 1},
 		// 	{1, 1, 1, 1},
 		// },
-		.LightPurpleGround = {
-			{141.0 / 255.0, 97.0 / 255.0, 237.0 / 255.0, 1},
-			{144.0 / 255.0, 100.0 / 255.0, 240.0 / 255.0, 1},
-			{138.0 / 255.0, 94.0 / 255.0, 234.0 / 255.0, 1},
-			{142.0 / 255.0, 98.0 / 255.0, 238.0 / 255.0, 1},
-			{143.0 / 255.0, 99.0 / 255.0, 239.0 / 255.0, 1},
-		},
-		.BlueDiamond       = {
-			{0.0 / 255.0, 236.0 / 255.0, 231.0 / 255.0, 1},
-			{3.0 / 255.0, 241.0 / 255.0, 236.0 / 255.0, 1},
-			{2.0 / 255.0, 240.0 / 255.0, 235.0 / 255.0, 1},
-			{0.0 / 255.0, 234.0 / 255.0, 229.0 / 255.0, 1},
-			{2.0 / 255.0, 240.0 / 255.0, 235.0 / 255.0, 1},
-		},
-		.BlackCliff        = {
-			{31.0 / 255.0, 22.0 / 255.0, 25.0 / 255.0, 1},
-			{26.0 / 255.0, 17.0 / 255.0, 20.0 / 255.0, 1},
-			{24.0 / 255.0, 15.0 / 255.0, 18.0 / 255.0, 1},
-			{25.0 / 255.0, 16.0 / 255.0, 19.0 / 255.0, 1},
-			{25.0 / 255.0, 16.0 / 255.0, 19.0 / 255.0, 1},
-		},
-		.PinkTrunk         = {
-			{229.0 / 255.0, 108.0 / 255.0, 125.0 / 255.0, 1},
-			{227.0 / 255.0, 106.0 / 255.0, 123.0 / 255.0, 1},
-			{226.0 / 255.0, 105.0 / 255.0, 122.0 / 255.0, 1},
-			{229.0 / 255.0, 108.0 / 255.0, 125.0 / 255.0, 1},
-			{232.0 / 255.0, 111.0 / 255.0, 128.0 / 255.0, 1},
-		},
-		.WhiteTreeLeaf     = {
-			{218.0 / 255.0, 189.0 / 255.0, 252.0 / 255.0, 1},
-			{216.0 / 255.0, 187.0 / 255.0, 250.0 / 255.0, 1},
-			{214.0 / 255.0, 185.0 / 255.0, 248.0 / 255.0, 1},
-			{221.0 / 255.0, 192.0 / 255.0, 255.0 / 255.0, 1},
-			{222.0 / 255.0, 193.0 / 255.0, 255.0 / 255.0, 1},
-		},
-		.Water             = {
-			{68.0 / 255.0, 131.0 / 255.0, 129.0 / 255.0, 1},
-			{68.0 / 255.0, 131.0 / 255.0, 129.0 / 255.0, 1},
-			{63.0 / 255.0, 126.0 / 255.0, 124.0 / 255.0, 1},
-			{69.0 / 255.0, 132.0 / 255.0, 130.0 / 255.0, 1},
-			{68.0 / 255.0, 131.0 / 255.0, 129.0 / 255.0, 1},
-		},
+		.LightPurpleGround = {141.0 / 255.0, 97.0 / 255.0, 237.0 / 255.0, 1},
+		.BlueDiamond       = {0.0 / 255.0, 236.0 / 255.0, 231.0 / 255.0, 1},
+		.BlackCliff        = {31.0 / 255.0, 22.0 / 255.0, 25.0 / 255.0, 1},
+		.PinkTrunk         = {229.0 / 255.0, 108.0 / 255.0, 125.0 / 255.0, 1},
+		.WhiteTreeLeaf     = {218.0 / 255.0, 189.0 / 255.0, 252.0 / 255.0, 1},
+		.Water             = {68.0 / 255.0, 131.0 / 255.0, 129.0 / 255.0, 1},
 	}
 }
 BottomFacedIndices := [?]u16{0, 1, 2, 0, 2, 3}
@@ -321,21 +333,50 @@ pipeline_data_delete :: proc(p: PipelineData) {
 // 	return visibles
 // }
 
-triangle_decide_color :: proc(pointTypes: [3]PointType, pointCoords: [3][3]i32) -> [4]f32 {
+triangle_decide_color :: proc(points: [3]u16) -> [4]f32 {
+	// for p in points do assert(is_valid_point_u16(p) && p != 0)
 
-	for p in pointTypes do assert(p != .Air)
-	colors := [3][4]f32{}
+	pointTypes: [3]PointType
+	for p, i in points do pointTypes[i] = u16_to_point_type(p)
+	// assert(is_valid_point_u16())%
+	finalColor := [3]f32{0, 0, 0}
 
 	for i in 0 ..< 3 {
-		idx := math.abs(hash_i32(pointCoords[i].x, pointCoords[i].y, pointCoords[i].z, seed))
-		idx %= len(Random_Colors_Per_Point_Type[pointTypes[i]])
-		colors[i] = Random_Colors_Per_Point_Type[pointTypes[i]][idx]
+		base := Random_Colors_Per_Point_Type[pointTypes[i]]
+
+		energy := energy_to_color(points[i])
+
+		combined := [3]f32 {
+			base[0] * 0.6 + energy[0] * 0.4,
+			base[1] * 0.6 + energy[1] * 0.4,
+			base[2] * 0.6 + energy[2] * 0.4,
+		}
+
+		finalColor[0] += combined[0]
+		finalColor[1] += combined[1]
+		finalColor[2] += combined[2]
 	}
-	color := colors[0]
-	for i in 1 ..< 3 {
-		colors = linalg.lerp(color, colors[i], .5)
+
+	finalColor[0] /= 3.0
+	finalColor[1] /= 3.0
+	finalColor[2] /= 3.0
+
+	return {finalColor[0], finalColor[1], finalColor[2], 1}
+}
+energy_to_color :: #force_inline proc(p: u16) -> [3]f32 {
+	light := f32(get_light(p)) / 3.0
+	life := f32(get_life(p)) / 3.0
+	wisdom := f32(get_wisdom(p)) / 3.0
+
+	// Light → yellow (1,1,0)
+	// Life  → green  (0,1,0)
+	// Wisdom→ blue   (0,0,1)
+
+	return {
+		light, // R
+		light + life, // G
+		wisdom, // B
 	}
-	return color
 }
 hash_i32 :: proc(x, y, z: i32, seed: u64) -> i32 {
 	h := seed
