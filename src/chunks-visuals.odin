@@ -700,40 +700,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						oneZeroOne :=
 							points[index_into_point_arrays(nx6, ny6, nz6)] if nx6 < VERTS_PER_X_DIR && nz6 < VERTS_PER_Z_DIR else 0
 
-						_process_vertex :: #force_inline proc(
-							mapper: []INDEX_TYPE_USED_IN_CHUNKS,
-							worldBase: [3]i32,
-							base: [3]i32,
-							offset: [3]i32,
-							vertexArr: [][3]f32,
-							vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
-							seed: u64,
-						) -> INDEX_TYPE_USED_IN_CHUNKS {
-							#no_bounds_check {
-								idxVal :=
-									(base.x + offset.x) * VERT_STRIDE_X +
-									(base.y + offset.y) * VERT_STRIDE_Y +
-									(base.z + offset.z)
-								if mapper[idxVal] != INVALID {
-									return mapper[idxVal]
-								}
-								wx := worldBase.x + offset.x
-								wy := worldBase.y + offset.y
-								wz := worldBase.z + offset.z
-
-								jitter := calculate_jitter(wx, wy, wz, gs.seed)
-								vertexArr[vertexArrayLen^] =
-									[3]f32{f32(wx), f32(wy), f32(wz)} + jitter
-								mapper[idxVal] = vertexArrayLen^
-								curr := vertexArrayLen^
-								vertexArrayLen^ += 1
-								return curr
-							}
-
-						}
 
 						if pointVal != 0 && oneZeroZero != 0 && oneOneZero != 0 {
-							i0 := _process_vertex(
+							i0 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -742,7 +711,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i1 := _process_vertex(
+							i1 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -751,7 +720,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i2 := _process_vertex(
+							i2 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -769,7 +738,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							staticColorsLen += 1
 						}
 						if pointVal != 0 && oneOneZero != 0 && zeroOneZero != 0 {
-							i0 := _process_vertex(
+							i0 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -778,7 +747,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i1 := _process_vertex(
+							i1 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -787,7 +756,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i2 := _process_vertex(
+							i2 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -805,7 +774,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							staticColorsLen += 1
 						}
 						if pointVal != 0 && zeroZeroOne != 0 && zeroOneOne != 0 {
-							i0 := _process_vertex(
+							i0 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -814,7 +783,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i1 := _process_vertex(
+							i1 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -823,7 +792,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i2 := _process_vertex(
+							i2 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -841,7 +810,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							staticColorsLen += 1
 						}
 						if pointVal != 0 && zeroOneOne != 0 && zeroOneZero != 0 {
-							i0 := _process_vertex(
+							i0 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -850,7 +819,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i1 := _process_vertex(
+							i1 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -859,7 +828,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i2 := _process_vertex(
+							i2 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -877,7 +846,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							staticColorsLen += 1
 						}
 						if pointVal != 0 && oneZeroZero != 0 && oneZeroOne != 0 {
-							i0 := _process_vertex(
+							i0 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -886,7 +855,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i1 := _process_vertex(
+							i1 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -895,7 +864,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i2 := _process_vertex(
+							i2 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -913,7 +882,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							staticColorsLen += 1
 						}
 						if pointVal != 0 && oneZeroOne != 0 && zeroZeroOne != 0 {
-							i0 := _process_vertex(
+							i0 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -922,7 +891,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i1 := _process_vertex(
+							i1 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -931,7 +900,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								&staticVisiblePointsLen,
 								gs.seed,
 							)
-							i2 := _process_vertex(
+							i2 := geometry_process_vertex(
 								mapper[:],
 								worldBase,
 								base,
@@ -1017,7 +986,38 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 
 		}
+	}}
+
+
+geometry_process_vertex :: proc "contextless" (
+	mapper: []INDEX_TYPE_USED_IN_CHUNKS,
+	worldBase: [3]i32,
+	base: [3]i32,
+	offset: [3]i32,
+	vertexArr: [][3]f32,
+	vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
+	seed: u64,
+) -> INDEX_TYPE_USED_IN_CHUNKS {
+	#no_bounds_check {
+		idxVal :=
+			(base.x + offset.x) * VERT_STRIDE_X +
+			(base.y + offset.y) * VERT_STRIDE_Y +
+			(base.z + offset.z)
+		if mapper[idxVal] != INVALID {
+			return mapper[idxVal]
+		}
+		wx := worldBase.x + offset.x
+		wy := worldBase.y + offset.y
+		wz := worldBase.z + offset.z
+
+		jitter := calculate_jitter(wx, wy, wz, gs.seed)
+		vertexArr[vertexArrayLen^] = [3]f32{f32(wx), f32(wy), f32(wz)} + jitter
+		mapper[idxVal] = vertexArrayLen^
+		curr := vertexArrayLen^
+		vertexArrayLen^ += 1
+		return curr
 	}
+
 }
 get_point_type :: #force_inline proc "contextless" (
 	base: [3]i32,
