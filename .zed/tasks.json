@@ -1,7 +1,7 @@
 [
   {
     "label": "build-prod",
-    "command": "odin build src -out:build/prod.exe  -vet-shadowing -o:speed",
+    "command": "odin build src -out:build/prod.exe  -vet-shadowing -o:speed  ",
     //"args": [],
     // Env overrides for the command, will be appended to the terminal's environment from the settings.
     // Current working directory to spawn the command into, defaults to current project root.
@@ -46,7 +46,7 @@
 
   {
     "label": "build-dev",
-    "command": "odin build src -out:build/debug.exe -debug  -vet-shadowing -define:TRACY_ENABLE=true",
+    "command": "odin build src -o:minimal -out:build/debug.exe -debug  -vet-shadowing -define:TRACY_ENABLE=true",
     //"args": [],
     // Env overrides for the command, will be appended to the terminal's environment from the settings.
     // Current working directory to spawn the command into, defaults to current project root.

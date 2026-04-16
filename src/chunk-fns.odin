@@ -2,6 +2,7 @@ package main
 import "../modules/tracy"
 import "../modules/vma"
 import "algorithms"
+import "camera"
 import "core:container/small_array"
 import "core:fmt"
 import "core:math"
@@ -17,7 +18,6 @@ import "core:simd"
 import "core:sync"
 import "core:thread"
 import vk "vendor:vulkan"
-
 
 chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool) {
 
@@ -44,7 +44,7 @@ chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool) {
 	}
 	return changed
 }
-chunks_frame_update :: proc(c: ^Camera) {
+chunks_frame_update :: proc(c: ^camera.Camera) {
 
 	for x in 0 ..< CHUNKS_PER_DIRECTION {
 		for z in 0 ..< CHUNKS_PER_DIRECTION {
@@ -57,7 +57,7 @@ chunks_frame_update :: proc(c: ^Camera) {
 	sync.wait(&chunkWorkersWG)
 	chunks_shift_per_player_movement(c)
 }
-chunks_shift_per_player_movement :: proc(c: ^Camera) {
+chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 	tracy.Zone()
 
 	xzOfCurrentCenterChunk := int2{i32(c.pos.x), i32(c.pos.z)} / CHUNK_STRIDE
@@ -172,4 +172,35 @@ chunks_shift_per_player_movement :: proc(c: ^Camera) {
 	}
 	sync.wait(&chunkWorkersWG)
 
+}
+
+
+is_chunk_in_camera_frustrum :: proc(pos: [2]i32, c: ^camera.Camera) -> bool {
+	min := [3]f32{f32(pos[0]), f32(MIN_Y), f32(pos[1])}
+	max := [3]f32{f32((pos[0] + CHUNK_SIZE)), f32(MAX_Y), f32((pos[1] + CHUNK_SIZE))}
+
+	view, proj := camera.Camera_view_proj(c)
+	vp := proj * view
+
+	vp = linalg.transpose(vp)
+	planes := [6][4]f32 {
+		vp[3] + vp[0], // left
+		vp[3] - vp[0], // right
+		vp[3] + vp[1], // bottom
+		vp[3] - vp[1], // top
+		vp[3] + vp[2], // near
+		vp[3] - vp[2], // far
+	}
+	for i in 0 ..< 6 {
+		n := planes[i].xyz
+		len := linalg.length(n)
+		planes[i] /= len
+	}
+	for plane in planes {
+		if !camera.aabb_vs_plane(min, max, plane) {
+			return false
+		}
+	}
+
+	return true
 }

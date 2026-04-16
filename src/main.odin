@@ -2,6 +2,7 @@ package main
 import "../modules/tracy"
 import "../modules/vma"
 import "base:runtime"
+import "camera"
 import "core:c"
 import "core:fmt"
 import "core:math/linalg"
@@ -12,9 +13,9 @@ import "core:path/filepath"
 import "core:prof/spall"
 import "core:sync"
 import "core:time"
+import "gs"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
-
 sdl_ensure :: proc(cond: bool, message: string = "") {
 	msg := fmt.tprintf("%s:%s\n", message, sdl.GetError())
 	ensure(cond, msg)
@@ -92,41 +93,42 @@ main :: proc() {
 		}
 
 	}
-	NUM_CORES = os.get_processor_core_count()
+	gs.NUM_CORES = os.get_processor_core_count()
 	{
 		tracy.Zone()
 		sdl_ensure(sdl.Init({.VIDEO, .EVENTS}))
-		window = sdl.CreateWindow(
+		gs.window = sdl.CreateWindow(
 			"Illuver",
-			i32(screenWidth),
-			i32(screenHeight),
+			i32(gs.screenWidth),
+			i32(gs.screenHeight),
 			{.RESIZABLE, .VULKAN},
 		)
-		sdl_ensure(window != nil)
+		sdl_ensure(gs.window != nil)
 		sdl.SetLogPriorities(.WARN)
 
 	}
 	when ODIN_DEBUG {
-		defer sdl.DestroyWindow(window)
+		defer sdl.DestroyWindow(gs.window)
 
 	}
 
 	// device = sdl.CreateGPUDevice({.SPIRV}, true, nil)
-	vulkan_init()
+	gs.vulkan_init()
 	when ODIN_DEBUG {
-		defer vulkan_cleanup()
+		defer gs.vulkan_cleanup()
 	}
 	// sdl_ensure(device != nil)
 	// defer sdl.DestroyGPUDevice(device)
 
 	// sdl_ensure(sdl.ClaimWindowForGPUDevice(device, window) != false)
 
+	currCamera := camera.Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
 
-	chunks_init(&camera)
+	chunks_init(&currCamera)
 	energyTickNow := time.tick_now()
-	LastLifeTick = energyTickNow
-	LastWisdomTick = energyTickNow
-	LastLightTick = energyTickNow
+	gs.LastLifeTick = energyTickNow
+	gs.LastWisdomTick = energyTickNow
+	gs.LastLightTick = energyTickNow
 	defer chunks_destroy()
 
 
@@ -146,16 +148,17 @@ main :: proc() {
 	currRotationAngle: f32 = 0
 	ROTATION_SPEED :: 90
 
-	prevScreenWidth := screenWidth
-	prevScreenHeight := screenHeight
-	rand.reset(seed)
+	prevScreenWidth := gs.screenWidth
+	prevScreenHeight := gs.screenHeight
+	rand.reset(gs.seed)
 	middleOfChunksInNormalCoords := f32((CHUNKS_PER_DIRECTION / 2)) * CHUNK_SIZE + CHUNK_SIZE / 2
 	middleOfMiddleChunkPos := float3{middleOfChunksInNormalCoords, 0, middleOfChunksInNormalCoords}
 	// camera = Camera_new(pos = middleOfMiddleChunkPos)
-	camera = Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
 
 	free_all(context.temp_allocator)
-	defer vk.DeviceWaitIdle(vkDevice)
+	when ODIN_DEBUG {
+		defer vk.DeviceWaitIdle(gs.vkDevice)
+	}
 
 	didLeftClickThisFrame := false
 	mouseX, mouseY: f32
@@ -168,13 +171,13 @@ main :: proc() {
 			frameEnd := time.now()
 			frameDuration := time.diff(frameEnd, lastFrameTime)
 
-			dt = time.duration_seconds(time.since(lastFrameTime))
+			gs.dt = time.duration_seconds(time.since(lastFrameTime))
 			lastFrameTime = time.now()
-			totalTime += f64(dt)
+			gs.totalTime += f64(gs.dt)
 
 		}
 		defer {
-			prevScreenWidth, prevScreenHeight = screenWidth, screenHeight
+			prevScreenWidth, prevScreenHeight = gs.screenWidth, gs.screenHeight
 		}
 
 		didLeftClickThisFrame = false
@@ -196,12 +199,12 @@ main :: proc() {
 
 
 			case .WINDOW_RESIZED:
-				screenWidth, screenHeight = u32(e.window.data1), u32(e.window.data2)
-				if screenWidth != prevScreenWidth || screenHeight != prevScreenHeight {
-					vkUpdateSwapchain = true
+				gs.screenWidth, gs.screenHeight = u32(e.window.data1), u32(e.window.data2)
+				if gs.screenWidth != prevScreenWidth || gs.screenHeight != prevScreenHeight {
+					gs.vkUpdateSwapchain = true
 				}
 			case .MOUSE_MOTION:
-				Camera_process_mouse_movement(&camera, e.motion.xrel, e.motion.yrel)
+				camera.Camera_process_mouse_movement(&currCamera, e.motion.xrel, e.motion.yrel)
 				mouseX = f32(e.motion.x)
 				mouseY = f32(e.motion.y)
 			case .MOUSE_BUTTON_DOWN:
@@ -212,26 +215,26 @@ main :: proc() {
 				continue
 			}
 		}
-		if prevScreenWidth != screenWidth || prevScreenHeight != screenHeight {
-			sdl.SetWindowSize(window, i32(screenWidth), i32(screenHeight))
-			vkUpdateSwapchain = true
-			sdl.SyncWindow(window)
+		if prevScreenWidth != gs.screenWidth || prevScreenHeight != gs.screenHeight {
+			sdl.SetWindowSize(gs.window, i32(gs.screenWidth), i32(gs.screenHeight))
+			gs.vkUpdateSwapchain = true
+			sdl.SyncWindow(gs.window)
 
 		}
-		vulkan_update_swapchain()
+		gs.vulkan_update_swapchain()
 
 		ticksToDo: bit_set[EnergyType] = {}
-		if time.tick_since(LastLifeTick) >= LifeInterval {
+		if time.tick_since(gs.LastLifeTick) >= gs.LifeInterval {
 			ticksToDo += {.Life}
 			// energy_tick({.Life})
 		}
 
-		if time.tick_since(LastWisdomTick) >= WisdomInterval {
+		if time.tick_since(gs.LastWisdomTick) >= gs.WisdomInterval {
 			ticksToDo += {.Wisdom}
 			// energy_tick({.Wisdom})
 		}
 
-		if time.tick_since(LastLightTick) >= LightInterval {
+		if time.tick_since(gs.LastLightTick) >= gs.LightInterval {
 			ticksToDo += {.Light}
 
 			// energy_tick({.Light})
@@ -239,31 +242,31 @@ main :: proc() {
 		if ticksToDo != {} {
 			energy_tick(ticksToDo)
 			if .Light in ticksToDo {
-				LastLightTick = time.tick_now()
+				gs.LastLightTick = time.tick_now()
 			}
 			if .Wisdom in ticksToDo {
-				LastWisdomTick = time.tick_now()
+				gs.LastWisdomTick = time.tick_now()
 			}
 			if .Life in ticksToDo {
-				LastLifeTick = time.tick_now()
+				gs.LastLifeTick = time.tick_now()
 			}
 		}
 
-		camera_process_keyboard_movement(&camera)
+		camera.camera_process_keyboard_movement(&currCamera)
 
-		chunks_frame_update(&camera)
+		chunks_frame_update(&currCamera)
 		// chunks_shift_per_player_movement(&camera)
 		// fmt.println("camera pos", camera.pos)
-		view, proj := Camera_view_proj(&camera)
+		view, proj := camera.Camera_view_proj(&currCamera)
 		cameraPtr: rawptr
-		vma.map_memory(vkAllocator, cameraBuffers[vkFrameIndex].alloc, &cameraPtr)
-		cameraUbo := CameraUBO {
+		vma.map_memory(gs.vkAllocator, gs.cameraBuffers[gs.vkFrameIndex].alloc, &cameraPtr)
+		currCameraUBO := gs.CameraUBO {
 			view = view,
 			proj = proj,
 		}
 
-		mem.copy(cameraPtr, &cameraUbo, size_of(cameraUbo))
-		vma.unmap_memory(vkAllocator, cameraBuffers[vkFrameIndex].alloc)
+		mem.copy(cameraPtr, &currCameraUBO, size_of(currCameraUBO))
+		vma.unmap_memory(gs.vkAllocator, gs.cameraBuffers[gs.vkFrameIndex].alloc)
 
 
 		//TODO. I FORGOT CAMERA HAS F32 AS POSITION AND NOT I32. THAT MIGHT MEAN THAT TRAVELLING FAR TO I32 IS GOING TO CAUSE PROBLEMS
@@ -273,38 +276,38 @@ main :: proc() {
 		// 	fmt.printf("%s : %d ,", str, int(weight))
 		// }
 		// fmt.println()
-		rayDir := compute_mouse_ray(mouseX, mouseY, screenWidth, screenHeight, view, proj)
+		rayDir := compute_mouse_ray(mouseX, mouseY, gs.screenWidth, gs.screenHeight, view, proj)
 
 		raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(
-			camera.pos,
-			camera.front,
+			currCamera.pos,
+			currCamera.front,
 		)
 		if raycastDidHappen && didLeftClickThisFrame {
 			chunk_set_point(raycastPointPos, u16(PointType.Air))
 		}
 		// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 
-		vulkan_update_swapchain()
-		vk_chk(vk.WaitForFences(vkDevice, 1, &vkFences[vkFrameIndex], true, max(u64)))
-		vk_run_deferred_buffer_releases(vkFrameIndex)
+		// gs.vulkan_update_swapchain()
+		gs.vk_chk(vk.WaitForFences(gs.vkDevice, 1, &gs.vkFences[gs.vkFrameIndex], true, max(u64)))
+		gs.vk_run_deferred_buffer_releases(gs.vkFrameIndex)
 
-		vk_chk(vk.ResetFences(vkDevice, 1, &vkFences[vkFrameIndex]))
-		vk_chk_swapchain(
+		gs.vk_chk(vk.ResetFences(gs.vkDevice, 1, &gs.vkFences[gs.vkFrameIndex]))
+		gs.vk_chk_swapchain(
 			vk.AcquireNextImageKHR(
-				vkDevice,
-				vkSwapchain,
+				gs.vkDevice,
+				gs.vkSwapchain,
 				max(u64),
-				vkPresentSemaphores[vkFrameIndex],
+				gs.vkPresentSemaphores[gs.vkFrameIndex],
 				vk.Fence{},
-				&imageIndex,
+				&gs.imageIndex,
 			),
 		)
 
 
-		cb := vkDrawCommandBuffers[vkFrameIndex]
-		vk_chk(vk.ResetCommandBuffer(cb, {}))
+		cb := gs.vkDrawCommandBuffers[gs.vkFrameIndex]
+		gs.vk_chk(vk.ResetCommandBuffer(cb, {}))
 
-		vk_chk(
+		gs.vk_chk(
 			vk.BeginCommandBuffer(
 				cb,
 				&{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
@@ -319,7 +322,7 @@ main :: proc() {
 				dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
 				oldLayout = .UNDEFINED,
 				newLayout = .ATTACHMENT_OPTIMAL,
-				image = vkSwapchainImages[imageIndex],
+				image = gs.vkSwapchainImages[gs.imageIndex],
 				subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 			},
 			{
@@ -330,7 +333,7 @@ main :: proc() {
 				dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
 				oldLayout = .UNDEFINED,
 				newLayout = .ATTACHMENT_OPTIMAL,
-				image = vkDepthImage,
+				image = gs.vkDepthImage,
 				subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
 			},
 		}
@@ -346,12 +349,12 @@ main :: proc() {
 			cb,
 			&{
 				sType = .RENDERING_INFO,
-				renderArea = {extent = {width = screenWidth, height = screenHeight}},
+				renderArea = {extent = {width = gs.screenWidth, height = gs.screenHeight}},
 				layerCount = 1,
 				colorAttachmentCount = 1,
 				pColorAttachments = &vk.RenderingAttachmentInfo {
 					sType = .RENDERING_ATTACHMENT_INFO,
-					imageView = vkSwpachainImageViews[imageIndex],
+					imageView = gs.vkSwpachainImageViews[gs.imageIndex],
 					imageLayout = .ATTACHMENT_OPTIMAL,
 					loadOp = .CLEAR,
 					storeOp = .STORE,
@@ -359,7 +362,7 @@ main :: proc() {
 				},
 				pDepthAttachment = &vk.RenderingAttachmentInfo {
 					sType = .RENDERING_ATTACHMENT_INFO,
-					imageView = vkDepthImageView,
+					imageView = gs.vkDepthImageView,
 					imageLayout = .ATTACHMENT_OPTIMAL,
 					loadOp = .CLEAR,
 					storeOp = .DONT_CARE,
@@ -371,14 +374,14 @@ main :: proc() {
 		MIN_RANGE_TO_SEE_POINT :: 6.0
 		if raycastDidHappen &&
 		   !didLeftClickThisFrame &&
-		   linalg.length(camera.pos - raycastPointPos) < MIN_RANGE_TO_SEE_POINT {
+		   linalg.length(currCamera.pos - raycastPointPos) < MIN_RANGE_TO_SEE_POINT {
 			highlight_sphere_draw(
 				cb,
 				&highlightSphere,
-				cameraBuffers[vkFrameIndex].buffer,
-				vk.DeviceSize(size_of(CameraUBO)),
+				gs.cameraBuffers[gs.vkFrameIndex].buffer,
+				vk.DeviceSize(size_of(gs.CameraUBO)),
 				raycastPointPos,
-				f32(totalTime),
+				f32(gs.totalTime),
 			)
 
 		}
@@ -386,8 +389,9 @@ main :: proc() {
 		chunks_draw(
 			cb,
 			&pointPipeline,
-			cameraBuffers[vkFrameIndex].buffer,
-			vk.DeviceSize(size_of(CameraUBO)),
+			gs.cameraBuffers[gs.vkFrameIndex].buffer,
+			vk.DeviceSize(size_of(gs.CameraUBO)),
+			&currCamera,
 		)
 
 
@@ -406,41 +410,41 @@ main :: proc() {
 					dstAccessMask = {},
 					oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
 					newLayout = .PRESENT_SRC_KHR,
-					image = vkSwapchainImages[imageIndex],
+					image = gs.vkSwapchainImages[gs.imageIndex],
 					subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 				},
 			},
 		)
 		vk.EndCommandBuffer(cb)
 		waitStage: vk.PipelineStageFlags = {.COLOR_ATTACHMENT_OUTPUT}
-		vk_chk(
+		gs.vk_chk(
 			vk.QueueSubmit(
-				vkQueue,
+				gs.vkQueue,
 				1,
 				&vk.SubmitInfo {
 					sType = .SUBMIT_INFO,
 					waitSemaphoreCount = 1,
-					pWaitSemaphores = &vkPresentSemaphores[vkFrameIndex],
+					pWaitSemaphores = &gs.vkPresentSemaphores[gs.vkFrameIndex],
 					pWaitDstStageMask = &waitStage,
 					commandBufferCount = 1,
 					pCommandBuffers = &cb,
 					signalSemaphoreCount = 1,
-					pSignalSemaphores = &vkRenderSemaphores[imageIndex],
+					pSignalSemaphores = &gs.vkRenderSemaphores[gs.imageIndex],
 				},
-				vkFences[vkFrameIndex],
+				gs.vkFences[gs.vkFrameIndex],
 			),
 		)
-		vkFrameIndex = (vkFrameIndex + 1) % MAX_FRAMES_IN_FLIGHT
-		vk_chk_swapchain(
+		gs.vkFrameIndex = (gs.vkFrameIndex + 1) % gs.MAX_FRAMES_IN_FLIGHT
+		gs.vk_chk_swapchain(
 			vk.QueuePresentKHR(
-				vkQueue,
+				gs.vkQueue,
 				&{
 					sType = .PRESENT_INFO_KHR,
 					waitSemaphoreCount = 1,
-					pWaitSemaphores = &vkRenderSemaphores[imageIndex],
+					pWaitSemaphores = &gs.vkRenderSemaphores[gs.imageIndex],
 					swapchainCount = 1,
-					pSwapchains = &vkSwapchain,
-					pImageIndices = &imageIndex,
+					pSwapchains = &gs.vkSwapchain,
+					pImageIndices = &gs.imageIndex,
 				},
 			),
 		)

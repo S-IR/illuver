@@ -1,7 +1,7 @@
 #version 450
 
 #ifdef VERTEX
-layout(set = 0, binding = 0) uniform CameraUBO {
+layout(set = 0, binding = 0) uniform gs . CameraUBO {
     mat4 view;
     mat4 proj;
 };

@@ -1,12 +1,15 @@
-package main
-import "../modules/tracy"
-import vma "../modules/vma"
+package gs
+import "../../modules/vma"
 import "core:container/small_array"
 import "core:fmt"
+import vk "vendor:vulkan"
+
+
+import "../../modules/tracy"
 import "core:log"
 import os "core:os"
 import sdl "vendor:sdl3"
-import vk "vendor:vulkan"
+
 
 vkInstance: vk.Instance
 vkPhysicalDevice: vk.PhysicalDevice
@@ -43,19 +46,32 @@ vkUpdateSwapchain: bool
 vkFrameIndex: u32 = 0
 imageIndex: u32 = 0
 
+MAX_FRAMES_IN_FLIGHT: u32 : 2
+MAX_DEFERRED_RELEASES :: 128
+
 VkBufferPoolElem :: struct {
 	buffer: vk.Buffer,
 	alloc:  vma.Allocation,
 }
 
-MAX_FRAMES_IN_FLIGHT: u32 : 2
+cameraBuffers := [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem{}
+
+DeferredBufferRelease :: struct {
+	buffer: vk.Buffer,
+	alloc:  vma.Allocation,
+}
+
+
+deferredBufferReleases: [MAX_FRAMES_IN_FLIGHT]small_array.Small_Array(
+	MAX_DEFERRED_RELEASES,
+	DeferredBufferRelease,
+)
 
 CameraUBO :: struct {
 	view: matrix[4, 4]f32,
 	proj: matrix[4, 4]f32,
 }
-cameraBuffers := [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem{}
-
+CameraUBOSize := vk.DeviceSize(size_of(CameraUBO))
 vulkan_init :: proc() {
 	tracy.Zone()
 	sdl.Vulkan_LoadLibrary(nil)
@@ -524,7 +540,9 @@ vulkan_init :: proc() {
 
 	for i in cameraBuffers do ensure(i.alloc != {})
 
+
 }
+
 vk_chk :: proc(r: vk.Result) {
 	if r != .SUCCESS {
 		when ODIN_DEBUG {
@@ -535,16 +553,6 @@ vk_chk :: proc(r: vk.Result) {
 	}
 }
 
-DeferredBufferRelease :: struct {
-	buffer: vk.Buffer,
-	alloc:  vma.Allocation,
-}
-
-MAX_DEFERRED_RELEASES :: 128
-deferredBufferReleases: [MAX_FRAMES_IN_FLIGHT]small_array.Small_Array(
-	MAX_DEFERRED_RELEASES,
-	DeferredBufferRelease,
-)
 
 vk_run_deferred_buffer_releases :: proc(frameIdx: u32) {
 	assert(frameIdx < MAX_FRAMES_IN_FLIGHT)

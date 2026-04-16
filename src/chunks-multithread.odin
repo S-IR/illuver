@@ -80,10 +80,11 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 			startZ: i32 = 0
 			endZ := i32(VERTS_PER_Z_DIR)
 
+			startY := i32(MIN_Y + 1)
 			for x in startX ..< endX {
 				for z in startZ ..< endZ {
-					energyTickIteration: for yHeight in (MIN_Y +
-						1) ..< math.min(chunk.heightMap[x * VERTS_PER_Z_DIR + z], MAX_Y - 1) {
+					endY := math.min(chunk.heightMap[x * VERTS_PER_Z_DIR + z], MAX_Y)
+					energyTickIteration: for yHeight in startY ..< endY {
 						y := i32(yHeight - MIN_Y)
 						baseIdx := index_into_point_arrays([3]i32{x, y, z})
 

@@ -2,6 +2,7 @@ package main
 import "../modules/tracy"
 import "../modules/vma"
 import "algorithms"
+import "camera"
 import "core:container/small_array"
 import "core:fmt"
 import "core:math"
@@ -16,8 +17,8 @@ import "core:prof/spall"
 import "core:simd"
 import "core:sync"
 import "core:thread"
+import "gs"
 import vk "vendor:vulkan"
-
 int3 :: [3]i32
 int2 :: [2]i32
 
@@ -46,9 +47,9 @@ Chunk :: struct {
 	points:       [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
 	heightMap:    [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]i32,
 	buffers:      struct {
-		pointsBuffer: [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem,
-		indices:      [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem,
-		colors:       [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem,
+		pointsBuffer: [gs.MAX_FRAMES_IN_FLIGHT]gs.VkBufferPoolElem,
+		indices:      [gs.MAX_FRAMES_IN_FLIGHT]gs.VkBufferPoolElem,
+		colors:       [gs.MAX_FRAMES_IN_FLIGHT]gs.VkBufferPoolElem,
 	},
 	pos:          int2,
 	totalPoints:  u32,
@@ -77,7 +78,7 @@ ChunkAtTheCenter := int2{}
 WorldArena := vmem.Arena{}
 WorldAllocator := mem.Allocator{}
 
-chunks_init :: proc(c: ^Camera) {
+chunks_init :: proc(c: ^camera.Camera) {
 	centerChunk := int2{i32(c.pos.x), i32(c.pos.z)} / CHUNK_SIZE
 	half :: CHUNKS_PER_DIRECTION / 2
 
@@ -87,8 +88,8 @@ chunks_init :: proc(c: ^Camera) {
 	WorldAllocator = vmem.arena_allocator(&WorldArena)
 
 	chunkJobQueue = make([dynamic]ChunkJob, WorldAllocator)
-	chunkWorkerStates = make([dynamic]ChunkWorkerState, NUM_CORES - 1, WorldAllocator)
-	chunkWorkerThreads = make([dynamic]^thread.Thread, NUM_CORES - 1, WorldAllocator)
+	chunkWorkerStates = make([dynamic]ChunkWorkerState, gs.NUM_CORES - 1, WorldAllocator)
+	chunkWorkerThreads = make([dynamic]^thread.Thread, gs.NUM_CORES - 1, WorldAllocator)
 
 	for &t, i in chunkWorkerThreads {
 		idx := new(int, WorldAllocator)
@@ -179,14 +180,14 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		state: ChunkWorkerState,
 	) {
 		chunk := &Chunks[xIdx][zIdx]
-		for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
 			if chunk.buffers.pointsBuffer[i].alloc != {} do continue
 			assert(chunk.buffers.indices[i].buffer == {})
 			assert(chunk.buffers.colors[i].buffer == {})
 
-			vk_chk(
+			gs.vk_chk(
 				vma.create_buffer(
-					vkAllocator,
+					gs.vkAllocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
 						size = vk.DeviceSize(MAX_POINTS * size_of([3]f32)),
@@ -198,9 +199,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					nil,
 				),
 			)
-			vk_chk(
+			gs.vk_chk(
 				vma.create_buffer(
-					vkAllocator,
+					gs.vkAllocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
 						size = vk.DeviceSize(MAX_INDICES * size_of(INDEX_TYPE_USED_IN_CHUNKS)),
@@ -213,9 +214,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				),
 			)
 
-			vk_chk(
+			gs.vk_chk(
 				vma.create_buffer(
-					vkAllocator,
+					gs.vkAllocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
 						size = vk.DeviceSize(MAX_COLORS * size_of([4]f32)),
@@ -276,11 +277,11 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		// 	for z: i32 = 0; z < VERTS_PER_Z_DIR; z += 1 {
 		// 		worldX := pos[0] + x
 		// 		worldZ := pos[1] + z
-		// 		biomeWeights := get_biome_weights(worldX, worldZ, seed)
+		// 		biomeWeights := get_biome_weights(worldX, worldZ, gs.seed)
 		// 		height: i32 = 0
 		// 		for biome, weight in biomeWeights {
 		// 			if weight < MIN_BIOME_WEIGHT_TO_NOT_IGNORE do continue
-		// 			height += i32(biome_height(biome, x, z, seed) * (f64(weight) / 255.0))
+		// 			height += i32(biome_height(biome, x, z, gs.seed) * (f64(weight) / 255.0))
 		// 		}
 		// 		assert(height <= 1 && height >= 0)
 		// 		when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_2D {
@@ -295,14 +296,14 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		// 				// 	worldXYZ.x,
 		// 				// 	worldXYZ.y,
 		// 				// 	worldXYZ.z,
-		// 				// 	seed,
+		// 				// 	gs.seed,
 		// 				// 	biomeWeights,
 		// 				// )
 		// 				chunk.points[idx] = procedural_point_type_noise_result(
 		// 					worldXYZ.x,
 		// 					worldXYZ.y,
 		// 					worldXYZ.z,
-		// 					seed,
+		// 					gs.seed,
 		// 					biomeWeights,
 		// 				)
 
@@ -337,7 +338,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							// 	coordWithoutJitter.x,
 							// 	coordWithoutJitter.y,
 							// 	coordWithoutJitter.z,
-							// 	seed,
+							// 	gs.seed,
 							// )
 							finalPointCoord := [3]f32 {
 								f32(coordWithoutJitter.x),
@@ -384,44 +385,52 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk.totalPoints = u32(staticVisiblePointsLen)
 		chunk.totalIndices = u32(staticIndicesLen)
 
-		for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
 			assert(chunk.buffers.pointsBuffer[i].alloc != {})
 			assert(chunk.buffers.indices[i].alloc != {})
 			assert(chunk.buffers.colors[i].alloc != {})
 
 
 			vertBufferPtr: rawptr
-			vk_chk(
-				vma.map_memory(vkAllocator, chunk.buffers.pointsBuffer[i].alloc, &vertBufferPtr),
+			gs.vk_chk(
+				vma.map_memory(
+					gs.vkAllocator,
+					chunk.buffers.pointsBuffer[i].alloc,
+					&vertBufferPtr,
+				),
 			)
 			mem.copy(
 				vertBufferPtr,
 				raw_data(staticVisiblePoints[0:staticVisiblePointsLen]),
 				staticVisiblePointsLen * size_of(staticVisiblePoints[0]),
 			)
-			vma.unmap_memory(vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
+			vma.unmap_memory(gs.vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
 
 			index := chunk.buffers.indices[i]
 
 
 			indexBufferPtr: rawptr
-			vk_chk(vma.map_memory(vkAllocator, chunk.buffers.indices[i].alloc, &indexBufferPtr))
+			gs.vk_chk(
+				vma.map_memory(gs.vkAllocator, chunk.buffers.indices[i].alloc, &indexBufferPtr),
+			)
 			mem.copy(
 				indexBufferPtr,
 				raw_data(staticIndices[0:staticIndicesLen]),
 				staticIndicesLen * size_of(staticIndices[0]),
 			)
-			vma.unmap_memory(vkAllocator, chunk.buffers.indices[i].alloc)
+			vma.unmap_memory(gs.vkAllocator, chunk.buffers.indices[i].alloc)
 
 
 			colorBuferPtr: rawptr
-			vk_chk(vma.map_memory(vkAllocator, chunk.buffers.colors[i].alloc, &colorBuferPtr))
+			gs.vk_chk(
+				vma.map_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc, &colorBuferPtr),
+			)
 			mem.copy(
 				colorBuferPtr,
 				raw_data(staticColors[0:staticColorsLen]),
 				staticColorsLen * size_of(staticColors[0]),
 			)
-			vma.unmap_memory(vkAllocator, chunk.buffers.colors[i].alloc)
+			vma.unmap_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc)
 		}
 
 
@@ -433,14 +442,14 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk := &Chunks[state.xIdx][state.zIdx]
 		{
 			tracy.Zone()
-			for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+			for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
 				if chunk.buffers.pointsBuffer[i].buffer != {} do continue
 				assert(chunk.buffers.indices[i].buffer == {})
 				assert(chunk.buffers.colors[i].buffer == {})
 
-				vk_chk(
+				gs.vk_chk(
 					vma.create_buffer(
-						vkAllocator,
+						gs.vkAllocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(MAX_POINTS * size_of([3]f32)),
@@ -452,9 +461,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						nil,
 					),
 				)
-				vk_chk(
+				gs.vk_chk(
 					vma.create_buffer(
-						vkAllocator,
+						gs.vkAllocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(MAX_INDICES * size_of(INDEX_TYPE_USED_IN_CHUNKS)),
@@ -467,9 +476,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					),
 				)
 
-				vk_chk(
+				gs.vk_chk(
 					vma.create_buffer(
-						vkAllocator,
+						gs.vkAllocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(MAX_COLORS * size_of([4]f32)),
@@ -512,12 +521,12 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				worldX := pos[0] + x
 				for z: i32 = 0; z < VERTS_PER_Z_DIR; z += 1 {
 					worldZ := pos[1] + z
-					biomeWeights := get_biome_weights(worldX, worldZ, seed)
+					biomeWeights := get_biome_weights(worldX, worldZ, gs.seed)
 					height: i32 = 0
 					for weight, biome in biomeWeights {
 						if weight < MIN_BIOME_WEIGHT_TO_NOT_IGNORE do continue
 						height += i32(
-							biome_height(biome, worldX, worldZ, seed) * (f32(weight) * inv255),
+							biome_height(biome, worldX, worldZ, gs.seed) * (f32(weight) * inv255),
 						)
 						height = math.clamp(height, MIN_Y + 1, MAX_Y - 1)
 					}
@@ -537,7 +546,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 							worldXYZ.y,
 							worldXYZ.z,
 							height,
-							seed,
+							gs.seed,
 						)
 						assert(is_valid_point_u16(pointVal))
 						chunk.points[idx] = pointVal
@@ -712,7 +721,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								wy := worldBase.y + offset.y
 								wz := worldBase.z + offset.z
 
-								jitter := calculate_jitter(wx, wy, wz, seed)
+								jitter := calculate_jitter(wx, wy, wz, gs.seed)
 								vertexArr[vertexArrayLen^] =
 									[3]f32{f32(wx), f32(wy), f32(wz)} + jitter
 								mapper[idxVal] = vertexArrayLen^
@@ -731,7 +740,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i1 := _process_vertex(
 								mapper[:],
@@ -740,7 +749,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{1, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i2 := _process_vertex(
 								mapper[:],
@@ -749,7 +758,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{1, 1, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							idx := staticIndicesLen
 							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
@@ -767,7 +776,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i1 := _process_vertex(
 								mapper[:],
@@ -776,7 +785,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{1, 1, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i2 := _process_vertex(
 								mapper[:],
@@ -785,7 +794,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 1, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							idx := staticIndicesLen
 							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
@@ -803,7 +812,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i1 := _process_vertex(
 								mapper[:],
@@ -812,7 +821,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 1},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i2 := _process_vertex(
 								mapper[:],
@@ -821,7 +830,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 1, 1},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							idx := staticIndicesLen
 							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
@@ -839,7 +848,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i1 := _process_vertex(
 								mapper[:],
@@ -848,7 +857,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 1, 1},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i2 := _process_vertex(
 								mapper[:],
@@ -857,7 +866,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 1, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							idx := staticIndicesLen
 							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
@@ -875,7 +884,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i1 := _process_vertex(
 								mapper[:],
@@ -884,7 +893,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{1, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i2 := _process_vertex(
 								mapper[:],
@@ -893,7 +902,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{1, 0, 1},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							idx := staticIndicesLen
 							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
@@ -911,7 +920,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 0},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i1 := _process_vertex(
 								mapper[:],
@@ -920,7 +929,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{1, 0, 1},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							i2 := _process_vertex(
 								mapper[:],
@@ -929,7 +938,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 								{0, 0, 1},
 								visible[:],
 								&staticVisiblePointsLen,
-								seed,
+								gs.seed,
 							)
 							idx := staticIndicesLen
 							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
@@ -956,16 +965,16 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 		{
 			tracy.Zone()
-			for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+			for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
 				assert(chunk.buffers.pointsBuffer[i].alloc != {})
 				assert(chunk.buffers.indices[i].alloc != {})
 				assert(chunk.buffers.colors[i].alloc != {})
 
 
 				vertBufferPtr: rawptr
-				vk_chk(
+				gs.vk_chk(
 					vma.map_memory(
-						vkAllocator,
+						gs.vkAllocator,
 						chunk.buffers.pointsBuffer[i].alloc,
 						&vertBufferPtr,
 					),
@@ -975,29 +984,35 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					raw_data(state.visiblePoints[0:staticVisiblePointsLen]),
 					int(staticVisiblePointsLen) * size_of(state.visiblePoints[0]),
 				)
-				vma.unmap_memory(vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
+				vma.unmap_memory(gs.vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
 
 
 				indexBufferPtr: rawptr
-				vk_chk(
-					vma.map_memory(vkAllocator, chunk.buffers.indices[i].alloc, &indexBufferPtr),
+				gs.vk_chk(
+					vma.map_memory(
+						gs.vkAllocator,
+						chunk.buffers.indices[i].alloc,
+						&indexBufferPtr,
+					),
 				)
 				mem.copy(
 					indexBufferPtr,
 					raw_data(state.indices[0:staticIndicesLen]),
 					staticIndicesLen * size_of(state.indices[0]),
 				)
-				vma.unmap_memory(vkAllocator, chunk.buffers.indices[i].alloc)
+				vma.unmap_memory(gs.vkAllocator, chunk.buffers.indices[i].alloc)
 
 
 				colorBufferPtr: rawptr
-				vk_chk(vma.map_memory(vkAllocator, chunk.buffers.colors[i].alloc, &colorBufferPtr))
+				gs.vk_chk(
+					vma.map_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc, &colorBufferPtr),
+				)
 				mem.copy(
 					colorBufferPtr,
 					raw_data(state.colors[0:staticColorsLen]),
 					staticColorsLen * size_of(state.colors[0]),
 				)
-				vma.unmap_memory(vkAllocator, chunk.buffers.colors[i].alloc)
+				vma.unmap_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc)
 			}
 
 
@@ -1062,10 +1077,10 @@ get_or_create_mapper_idx :: proc "contextless" (
 }
 point_real_world_position :: #force_inline proc "contextless" (worldXYZ: [3]f32) -> [3]f32 {
 	// return worldXYZ
-	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), seed)
+	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), gs.seed)
 }
 calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -> [3]f32 {
-	h := u32(x) * 0x9e3779b9 + u32(y) * 0x85ebca6b + u32(z) * 0x27d4eb2d + u32(seed)
+	h := u32(x) * 0x9e3779b9 + u32(y) * 0x85ebca6b + u32(z) * 0x27d4eb2d + u32(gs.seed)
 	h = (h ~ (h >> 13)) * 0x9e3779b9
 	fx := f32(h & 0xFFFF) * (1.0 / 65536.0) - 0.5
 	fy := f32((h >> 16) & 0xFFFF) * (1.0 / 65536.0) - 0.5
@@ -1077,8 +1092,9 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 chunks_draw :: proc(
 	cb: vk.CommandBuffer,
 	p: ^PipelineData,
-	cameraUbo: vk.Buffer,
-	cameraUboSize: vk.DeviceSize,
+	CameraUBO: vk.Buffer,
+	CameraUBOSize: vk.DeviceSize,
+	currCamera: ^camera.Camera,
 ) {
 	vk.CmdBindPipeline(cb, .GRAPHICS, p.graphicsPipeline)
 	vk.CmdSetViewport(
@@ -1086,42 +1102,47 @@ chunks_draw :: proc(
 		0,
 		1,
 		&vk.Viewport {
-			width = f32(screenWidth),
-			height = -f32(screenHeight),
+			width = f32(gs.screenWidth),
+			height = -f32(gs.screenHeight),
 			minDepth = 0,
 			maxDepth = 1,
-			y = f32(screenHeight),
+			y = f32(gs.screenHeight),
 			x = 0,
 		},
 	)
-	vk.CmdSetScissor(cb, 0, 1, &vk.Rect2D{extent = {width = screenWidth, height = screenHeight}})
+	vk.CmdSetScissor(
+		cb,
+		0,
+		1,
+		&vk.Rect2D{extent = {width = gs.screenWidth, height = gs.screenHeight}},
+	)
 	for x in 0 ..< len(Chunks) {
 		for y in 0 ..< len(Chunks[0]) {
 
 			chunk := &Chunks[x][y]
 			// if chunk.pos != {0, 0} do continue
-			if !is_chunk_in_camera_frustrum(chunk.pos, &camera) do continue
+			if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
 			if chunk.totalIndices == 0 do continue
 
 
-			assert(chunk.buffers.pointsBuffer[vkFrameIndex].alloc != {})
-			vertexBuffer := chunk.buffers.pointsBuffer[vkFrameIndex].buffer
+			assert(chunk.buffers.pointsBuffer[gs.vkFrameIndex].alloc != {})
+			vertexBuffer := chunk.buffers.pointsBuffer[gs.vkFrameIndex].buffer
 			vertexOffset := vk.DeviceSize(0)
 
 			vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
 			#assert(INDEX_TYPE_USED_IN_CHUNKS == u32)
 
-			vk.CmdBindIndexBuffer(cb, chunk.buffers.indices[vkFrameIndex].buffer, 0, .UINT32)
+			vk.CmdBindIndexBuffer(cb, chunk.buffers.indices[gs.vkFrameIndex].buffer, 0, .UINT32)
 
 
 			cameraInfo := vk.DescriptorBufferInfo {
-				buffer = cameraUbo,
+				buffer = gs.cameraBuffers[gs.vkFrameIndex].buffer,
 				offset = 0,
-				range  = cameraUboSize,
+				range  = gs.CameraUBOSize,
 			}
 
 			colorInfo := vk.DescriptorBufferInfo {
-				buffer = chunk.buffers.colors[vkFrameIndex].buffer,
+				buffer = chunk.buffers.colors[gs.vkFrameIndex].buffer,
 				offset = 0,
 				range  = vk.DeviceSize(vk.WHOLE_SIZE),
 			}
@@ -1181,10 +1202,10 @@ chunks_destroy :: proc() {
 chunk_destroy :: proc(chunk: ^Chunk) {
 	assert(chunk != nil)
 
-	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+	for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
 		if chunk.buffers.pointsBuffer[i].alloc != {} {
 			vma.destroy_buffer(
-				vkAllocator,
+				gs.vkAllocator,
 				chunk.buffers.pointsBuffer[i].buffer,
 				chunk.buffers.pointsBuffer[i].alloc,
 			)
@@ -1192,7 +1213,7 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 		}
 		if chunk.buffers.indices[i].alloc != {} {
 			vma.destroy_buffer(
-				vkAllocator,
+				gs.vkAllocator,
 				chunk.buffers.indices[i].buffer,
 				chunk.buffers.indices[i].alloc,
 			)
@@ -1200,7 +1221,7 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 		}
 		if chunk.buffers.colors[i].alloc != {} {
 			vma.destroy_buffer(
-				vkAllocator,
+				gs.vkAllocator,
 				chunk.buffers.colors[i].buffer,
 				chunk.buffers.colors[i].alloc,
 			)

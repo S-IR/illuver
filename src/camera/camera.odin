@@ -1,4 +1,5 @@
-package main
+package camera
+import "../gs"
 import "core:math"
 import "core:math/linalg"
 import sdl "vendor:sdl3"
@@ -17,13 +18,13 @@ DEFAULT_FOV :: 45.0
 DEFAULT_SENSITIVITY: f32 = 0.2
 
 
-WORLD_UP: float3 : {0, 1, 0}
+WORLD_UP :: [3]f32{0, 1, 0}
 
 Camera :: struct {
-	pos:              float3,
-	front:            float3,
-	up:               float3,
-	right:            float3,
+	pos:              [3]f32,
+	front:            [3]f32,
+	up:               [3]f32,
+	right:            [3]f32,
 	yaw:              f32,
 	pitch:            f32,
 	movementSpeed:    f32,
@@ -32,9 +33,9 @@ Camera :: struct {
 }
 
 Camera_new :: proc(
-	pos: float3 = {0.0, 0.0, 0},
-	front: float3 = {0, 0, 1},
-	up: float3 = {0.0, 1.0, 0.0},
+	pos: [3]f32 = {0.0, 0.0, 0},
+	front: [3]f32 = {0, 0, 1},
+	up: [3]f32 = {0.0, 1.0, 0.0},
 	fov: f32 = DEFAULT_FOV,
 ) -> Camera {
 	f := linalg.normalize(front)
@@ -55,9 +56,9 @@ Camera_new :: proc(
 camera_process_keyboard_movement :: proc(c: ^Camera) {
 	keys := sdl.GetKeyboardState(nil)
 
-	movementVector: float3 = {}
-	normalizedFront := linalg.normalize(float3{c.front.x, 0, c.front.z})
-	normalizedRight := linalg.normalize(float3{c.right.x, 0, c.right.z})
+	movementVector: [3]f32 = {}
+	normalizedFront := linalg.normalize([3]f32{c.front.x, 0, c.front.z})
+	normalizedRight := linalg.normalize([3]f32{c.right.x, 0, c.right.z})
 
 	if keys[sdl.Scancode.W] != false {
 		movementVector += normalizedFront
@@ -81,7 +82,7 @@ camera_process_keyboard_movement :: proc(c: ^Camera) {
 
 	if linalg.length(movementVector) <= 0 do return
 
-	delta := linalg.normalize(movementVector) * c.movementSpeed * f32(dt)
+	delta := linalg.normalize(movementVector) * c.movementSpeed * f32(gs.dt)
 	// fmt.println("movementVector", movementVector)
 	c.pos += delta
 }
@@ -106,9 +107,9 @@ Camera_view_proj :: proc(c: ^Camera) -> (view, proj: matrix[4, 4]f32) {
 
 	proj = linalg.matrix4_perspective_f32(
 		c.fov,
-		f32(screenWidth) / f32(screenHeight),
-		f32(near_plane),
-		f32(far_plane),
+		f32(gs.screenWidth) / f32(gs.screenHeight),
+		f32(gs.nearPlane),
+		f32(gs.farPlane),
 		true,
 	)
 	// proj[1][1] *= -1
@@ -138,7 +139,7 @@ Camera_rotate :: proc(c: ^Camera) {
 }
 
 // frustum_from_camera :: proc(c: ^Camera) -> [6]Plane {
-//     aspect := f32(screenWidth) / f32(screenHeight)
+//     aspect := f32(gs.screenWidth) / f32(gs.screenHeight)
 //     half_v_side := far_plane * math.tan_f32(c.fov * linalg.RAD_PER_DEG * 0.5)
 //     half_h_side := half_v_side * aspect
 //     front_mult_far := c.front * far_plane
@@ -154,42 +155,11 @@ Camera_rotate :: proc(c: ^Camera) {
 //         {c.pos,             linalg.normalize(linalg.cross(front_mult_far + c.up * half_v_side, c.right))},
 //     }
 // }
-aabb_vs_plane :: proc(min, max: float3, plane: float4) -> bool {
+aabb_vs_plane :: proc(min, max: [3]f32, plane: [4]f32) -> bool {
 	n := plane.xyz
 	d := plane.w
 
-	p := float3{n.x >= 0 ? max.x : min.x, n.y >= 0 ? max.y : min.y, n.z >= 0 ? max.z : min.z}
+	p := [3]f32{n.x >= 0 ? max.x : min.x, n.y >= 0 ? max.y : min.y, n.z >= 0 ? max.z : min.z}
 
 	return linalg.dot(n, p) + d >= 0
-}
-
-
-is_chunk_in_camera_frustrum :: proc(pos: [2]i32, c: ^Camera) -> bool {
-	min := float3{f32(pos[0]), f32(MIN_Y), f32(pos[1])}
-	max := float3{f32((pos[0] + CHUNK_SIZE)), f32(MAX_Y), f32((pos[1] + CHUNK_SIZE))}
-
-	view, proj := Camera_view_proj(c)
-	vp := proj * view
-
-	vp = linalg.transpose(vp)
-	planes := [6]float4 {
-		vp[3] + vp[0], // left
-		vp[3] - vp[0], // right
-		vp[3] + vp[1], // bottom
-		vp[3] - vp[1], // top
-		vp[3] + vp[2], // near
-		vp[3] - vp[2], // far
-	}
-	for i in 0 ..< 6 {
-		n := planes[i].xyz
-		len := linalg.length(n)
-		planes[i] /= len
-	}
-	for plane in planes {
-		if !aabb_vs_plane(min, max, plane) {
-			return false
-		}
-	}
-
-	return true
 }

@@ -1,0 +1,10 @@
+package main
+import "../modules/tracy"
+import vma "../modules/vma"
+import "core:container/small_array"
+import "core:fmt"
+import "core:log"
+import os "core:os"
+import gs "gs"
+import sdl "vendor:sdl3"
+import vk "vendor:vulkan"

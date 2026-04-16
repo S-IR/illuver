@@ -7,6 +7,7 @@ import "core:math/rand"
 import "core:mem"
 import "core:path/filepath"
 import "core:time"
+import "gs"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 
@@ -143,9 +144,9 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 		},
 	}
 
-	vk_chk(
+	gs.vk_chk(
 		vk.CreateDescriptorSetLayout(
-			vkDevice,
+			gs.vkDevice,
 			&vk.DescriptorSetLayoutCreateInfo {
 				sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 				flags = {.PUSH_DESCRIPTOR_KHR},
@@ -161,15 +162,15 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 	VERT_SPV :: #load("../build/shader-binaries/point.vertex.spv")
 	FRAG_SPV :: #load("../build/shader-binaries/point.fragment.spv")
 
-	vertModule := create_shader_module(vkDevice, VERT_SPV)
-	fragModule := create_shader_module(vkDevice, FRAG_SPV)
+	vertModule := gs.create_shader_module(gs.vkDevice, VERT_SPV)
+	fragModule := gs.create_shader_module(gs.vkDevice, FRAG_SPV)
 
-	defer vk.DestroyShaderModule(vkDevice, vertModule, nil)
-	defer vk.DestroyShaderModule(vkDevice, fragModule, nil)
+	defer vk.DestroyShaderModule(gs.vkDevice, vertModule, nil)
+	defer vk.DestroyShaderModule(gs.vkDevice, fragModule, nil)
 	// --- Pipeline layout ---
-	vk_chk(
+	gs.vk_chk(
 		vk.CreatePipelineLayout(
-			vkDevice,
+			gs.vkDevice,
 			&vk.PipelineLayoutCreateInfo {
 				sType = .PIPELINE_LAYOUT_CREATE_INFO,
 				setLayoutCount = 1,
@@ -207,9 +208,9 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 	}
 
 	// --- Graphics pipeline ---
-	vk_chk(
+	gs.vk_chk(
 		vk.CreateGraphicsPipelines(
-			vkDevice,
+			gs.vkDevice,
 			{},
 			1,
 			&vk.GraphicsPipelineCreateInfo {
@@ -217,8 +218,8 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 				pNext = &vk.PipelineRenderingCreateInfo {
 					sType = .PIPELINE_RENDERING_CREATE_INFO,
 					colorAttachmentCount = 1,
-					pColorAttachmentFormats = &vkSwapchainImageFormat,
-					depthAttachmentFormat = vkDepthFormat,
+					pColorAttachmentFormats = &gs.vkSwapchainImageFormat,
+					depthAttachmentFormat = gs.vkDepthFormat,
 				},
 				stageCount = len(pipelineStages),
 				pStages = raw_data(pipelineStages[:]),
@@ -279,11 +280,11 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 
 
 pipeline_data_delete :: proc(p: PipelineData) {
-	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkDevice, p.descriptorSetLayout, nil)
+	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(gs.vkDevice, p.descriptorSetLayout, nil)
 
-	if p.layout != {} do vk.DestroyPipelineLayout(vkDevice, p.layout, nil)
+	if p.layout != {} do vk.DestroyPipelineLayout(gs.vkDevice, p.layout, nil)
 
-	if p.graphicsPipeline != {} do vk.DestroyPipeline(vkDevice, p.graphicsPipeline, nil)
+	if p.graphicsPipeline != {} do vk.DestroyPipeline(gs.vkDevice, p.graphicsPipeline, nil)
 
 }
 
