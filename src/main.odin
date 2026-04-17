@@ -203,7 +203,6 @@ main :: proc() {
 	when ODIN_DEBUG do defer vk.DeviceWaitIdle(vkh.device)
 
 
-	didLeftClickThisFrame := false
 	mouseX, mouseY: f32
 
 	vkh.loader_command_buffer_wait_and_destroy(loadCb, fence)
@@ -224,8 +223,7 @@ main :: proc() {
 		defer {
 			prevScreenWidth, prevScreenHeight = gs.screenWidth, gs.screenHeight
 		}
-
-		didLeftClickThisFrame = false
+		pressedRightClickThisFrame := false
 		for sdl.PollEvent(&e) {
 
 			SCALE_STEP :: f32(0.001)
@@ -241,23 +239,23 @@ main :: proc() {
 				case sdl.K_ESCAPE:
 					quit = true
 				case sdl.K_1:
-					spellbar_select(&inventory, 1)
+					spellbar_select(&inventory, 0)
 				case sdl.K_2:
-					spellbar_select(&inventory, 2)
+					spellbar_select(&inventory, 1)
 				case sdl.K_3:
-					spellbar_select(&inventory, 3)
+					spellbar_select(&inventory, 2)
 				case sdl.K_4:
-					spellbar_select(&inventory, 4)
+					spellbar_select(&inventory, 3)
 				case sdl.K_5:
-					spellbar_select(&inventory, 5)
+					spellbar_select(&inventory, 4)
 				case sdl.K_6:
-					spellbar_select(&inventory, 6)
+					spellbar_select(&inventory, 5)
 				case sdl.K_7:
-					spellbar_select(&inventory, 7)
+					spellbar_select(&inventory, 6)
 				case sdl.K_8:
-					spellbar_select(&inventory, 8)
+					spellbar_select(&inventory, 7)
 				case sdl.K_9:
-					spellbar_select(&inventory, 9)
+					spellbar_select(&inventory, 8)
 
 				}
 
@@ -272,9 +270,9 @@ main :: proc() {
 				mouseX = f32(e.motion.x)
 				mouseY = f32(e.motion.y)
 			case .MOUSE_BUTTON_DOWN:
-			// if e.button.button == sdl.BUTTON_LEFT {
-			// 	didLeftClickThisFrame = true
-			// }
+				if e.button.button == sdl.BUTTON_RIGHT {
+					pressedRightClickThisFrame = true
+				}
 			case:
 				continue
 			}
@@ -284,7 +282,7 @@ main :: proc() {
 			vkh.updateSwapchain = true
 			sdl.SyncWindow(gs.window)
 		}
-		didLeftClickThisFrame = .LEFT in sdl.GetMouseState(nil, nil)
+		leftClickIsHeldThisFrame := .LEFT in sdl.GetMouseState(nil, nil)
 		vkh.vulkan_update_swapchain()
 
 		ticksToDo: bit_set[EnergyType] = {}
@@ -333,24 +331,31 @@ main :: proc() {
 		vma.unmap_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc)
 
 
-		//TODO. I FORGOT CAMERA HAS F32 AS POSITION AND NOT I32. THAT MIGHT MEAN THAT TRAVELLING FAR TO I32 IS GOING TO CAUSE PROBLEMS
-		// biomeWeights := get_biome_weights(i32(camera.pos.x), i32(camera.pos.z), seed)
-		// for weight, biome in biomeWeights {
-		// 	str, _ := fmt.enum_value_to_string(biome)
-		// 	fmt.printf("%s : %d ,", str, int(weight))
-		// }
-		// fmt.println()
 		rayDir := compute_mouse_ray(mouseX, mouseY, gs.screenWidth, gs.screenHeight, view, proj)
 
+		inventorySelectedPoint := inventory_get_selected_point(&inventory)
 		raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(
 			currCamera.pos,
 			currCamera.front,
+			inventorySelectedPoint != .Air,
 		)
-		if raycastDidHappen && didLeftClickThisFrame {
+		raycastIf: if raycastDidHappen && leftClickIsHeldThisFrame {
 			changed, prev := chunk_set_point(raycastPointPos, PointType.Air)
-			if changed {
+			if u16_to_point_type(prev) != .Air {
 				inventory_add_item(&inventory, u16_to_point_type(prev))
 			}
+
+			// if !changed do break raycastIf
+		}
+
+		if raycastDidHappen &&
+		   pressedRightClickThisFrame &&
+		   u16_to_point_type(raycastPointHit) == .Air {
+			if inventorySelectedPoint != .Air {
+				inventory_reduce_amount_from_selected(&inventory)
+				chunk_set_point(raycastPointPos, inventorySelectedPoint)
+			}
+
 		}
 		// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 
@@ -439,7 +444,7 @@ main :: proc() {
 		)
 		MIN_RANGE_TO_SEE_POINT :: 6.0
 		if raycastDidHappen &&
-		   !didLeftClickThisFrame &&
+		   !leftClickIsHeldThisFrame &&
 		   linalg.length(currCamera.pos - raycastPointPos) < MIN_RANGE_TO_SEE_POINT {
 			highlight_sphere_draw(
 				cb,

@@ -22,52 +22,47 @@ InventorySlot :: struct {
 Inventory :: struct {
 	spellbar: struct {
 		spells:   [9]InventorySlot,
-		selected: int,
+		selected: uint,
 	},
 	bag:      struct {
 		default: [DEFAULT_BAG_SIZE]InventorySlot,
 	},
 	usedFont: ui.BMFont,
 }
-TexturesPerPointType := [PointType]vkh.GPUTexture{}
+InventoryTexturesAtlas := vkh.GPUTexture{}
 
 inventory_init :: proc(cb: vk.CommandBuffer, usedFont: ui.BMFont) -> (inventory: Inventory) {
 	// s.selected = .One
-	for &t in TexturesPerPointType do t = ui.vkDummyTexture
+	// for &t in InventoryTexturesAtlas do t = ui.vkDummyTexture
 
 
-	#assert(#exists("../build/assets/textures/yellow-dirt.png"))
-	pointTypeTexturePaths := #partial [PointType]cstring {
-		.YellowDirt = "assets" + filepath.SEPARATOR_STRING + "textures" + filepath.SEPARATOR_STRING + "yellow-dirt.png",
-	}
+	atlasPath: cstring :
+		"assets" +
+		filepath.SEPARATOR_STRING +
+		"textures" +
+		filepath.SEPARATOR_STRING +
+		"inventory-atlas.png"
+	#assert(#exists("../build/" + atlasPath))
 
-	for path, pointType in pointTypeTexturePaths {
-		if pointType == .Air do continue
-		if len(path) == 0 do break
-		inputs: vkh.ImageLoaderInputs
-		DESIRED_CHANNELS :: 4
-		inputs.data = stbImage.load(path, &inputs.width, &inputs.height, nil, DESIRED_CHANNELS)
-		assert(inputs.data != nil)
-		defer stbImage.image_free(inputs.data)
-		inputs.magFilter = .LINEAR
-		inputs.minFilter = .LINEAR
-		inputs.channels = DESIRED_CHANNELS
-		TexturesPerPointType[pointType] = vkh.load_image(inputs, cb)
+	inputs: vkh.ImageLoaderInputs
+	DESIRED_CHANNELS :: 4
+	inputs.data = stbImage.load(atlasPath, &inputs.width, &inputs.height, nil, DESIRED_CHANNELS)
+	assert(inputs.data != nil)
+	defer stbImage.image_free(inputs.data)
+	inputs.magFilter = .LINEAR
+	inputs.minFilter = .LINEAR
+	inputs.channels = DESIRED_CHANNELS
+	InventoryTexturesAtlas = vkh.load_image(inputs, cb)
 
-	}
 	inventory.spellbar.selected = 0
 	inventory.usedFont = usedFont
 	return inventory
 }
 inventory_destroy :: proc(i: ^Inventory) {
-	for t, pointType in TexturesPerPointType {
-		if pointType == .Air do continue
-		if t.id == ui.VK_UI_DUMMY_TEXTURE_ID do break
-		vkh.gpu_texture_destroy(t)
-	}
+	vkh.gpu_texture_destroy(InventoryTexturesAtlas)
 }
-spellbar_select :: proc(inventory: ^Inventory, val: int) {
-	assert(val >= 1 && val <= 9)
+spellbar_select :: proc(inventory: ^Inventory, val: uint) {
+	assert(val >= 0 && val <= 8)
 	inventory.spellbar.selected = val
 
 	// TexturesPerPointType[.YellowDirt] = vkh.
@@ -121,13 +116,7 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 	if emptySlotIdx != -1 {
 		switch hasEmptySlotInventoryType {
 		case .Spellbar:
-			fmt.println("SpellbarSlot(emptySlotIdx)", fmt.enum_value_to_string(emptySlotIdx))
-			fmt.println(
-				"inventory.spellbar.spells[emptySlotIdx]",
-				inventory.spellbar.spells[emptySlotIdx],
-			)
-			assert(inventory.spellbar.spells[emptySlotIdx].count == 0)
-			assert(inventory.spellbar.spells[emptySlotIdx].val == .Air)
+			assert(inventory.spellbar.spells[emptySlotIdx] == {})
 
 			inventory.spellbar.spells[emptySlotIdx] = {
 				count = 1,
@@ -144,6 +133,15 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 	}
 	return false
 }
+inventory_get_selected_point :: proc(inventory: ^Inventory) -> PointType {
+	return inventory.spellbar.spells[inventory.spellbar.selected].val
+}
+inventory_reduce_amount_from_selected :: proc(inventory: ^Inventory) {
+	assert(inventory.spellbar.selected != 1)
+	assert(inventory.spellbar.spells[inventory.spellbar.selected] != {})
+	inventory.spellbar.spells[inventory.spellbar.selected].count -= 1
+
+}
 spellbar_render :: proc(inventory: ^Inventory) {
 	// if !spellbarIsOpen do return
 	// add_rect(f32(0), f32(0), f32(gs.screenWidth), f32(gs.screenHeight), [4]f32{.1, .1, .1, .25})
@@ -158,7 +156,7 @@ spellbar_render :: proc(inventory: ^Inventory) {
 	for spell, i in inventory.spellbar.spells {
 		if spell.val == .Air {
 			color :=
-				[4]f32{.03, .27, .86, 1} if i != inventory.spellbar.selected else [4]f32{1, 1, 1, 1}
+				[4]f32{.03, .27, .86, 1} if uint(i) != inventory.spellbar.selected else [4]f32{1, 1, 1, 1}
 			ui.add_rect(
 				f32(currX),
 				f32(currY),
@@ -168,14 +166,14 @@ spellbar_render :: proc(inventory: ^Inventory) {
 			)
 
 		} else {
-			texture := TexturesPerPointType[spell.val]
-			assert(texture != ui.vkDummyTexture)
+
+			assert(InventoryTexturesAtlas != ui.vkDummyTexture)
 			ui.add_image(
 				f32(currX),
 				f32(currY),
 				f32(spellbarOneSpellWidth),
 				f32(spellbarOneSpellHeight),
-				texture,
+				InventoryTexturesAtlas,
 			)
 			countText := fmt.tprint(spell.count)
 			countTextFontSize: f32 = 32
