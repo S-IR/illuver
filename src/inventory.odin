@@ -7,17 +7,7 @@ import "ui"
 import stbImage "vendor:stb/image"
 import vk "vendor:vulkan"
 import "vkh"
-SpellbarSlot :: enum u32 {
-	One,
-	Two,
-	Three,
-	Four,
-	Five,
-	Six,
-	Seven,
-	Eight,
-	Nine,
-}
+
 
 // Spellbar ::
 
@@ -31,8 +21,8 @@ InventorySlot :: struct {
 #assert(max(type_of(InventorySlot{}.count)) >= INVENTORY_SLOT_MAX_COUNT)
 Inventory :: struct {
 	spellbar: struct {
-		spells:   [SpellbarSlot]InventorySlot,
-		selected: SpellbarSlot,
+		spells:   [9]InventorySlot,
+		selected: int,
 	},
 	bag:      struct {
 		default: [DEFAULT_BAG_SIZE]InventorySlot,
@@ -65,7 +55,7 @@ inventory_init :: proc(cb: vk.CommandBuffer, usedFont: ui.BMFont) -> (inventory:
 		TexturesPerPointType[pointType] = vkh.load_image(inputs, cb)
 
 	}
-	inventory.spellbar.selected = .One
+	inventory.spellbar.selected = 0
 	inventory.usedFont = usedFont
 	return inventory
 }
@@ -76,9 +66,9 @@ inventory_destroy :: proc(i: ^Inventory) {
 		vkh.gpu_texture_destroy(t)
 	}
 }
-spellbar_select :: proc(inventory: ^Inventory, val: u32) {
+spellbar_select :: proc(inventory: ^Inventory, val: int) {
 	assert(val >= 1 && val <= 9)
-	inventory.spellbar.selected = SpellbarSlot(val - 1)
+	inventory.spellbar.selected = val
 
 	// TexturesPerPointType[.YellowDirt] = vkh.
 }
@@ -87,6 +77,7 @@ InventoryType :: enum {
 	BagDefault,
 }
 inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoughSpace: bool) {
+	assert(point != .Air)
 	emptySlotIdx: int = -1
 	hasEmptySlotInventoryType: InventoryType
 
@@ -130,8 +121,15 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 	if emptySlotIdx != -1 {
 		switch hasEmptySlotInventoryType {
 		case .Spellbar:
-			assert(inventory.spellbar.spells[SpellbarSlot(emptySlotIdx)] == {})
-			inventory.spellbar.spells[SpellbarSlot(emptySlotIdx)] = {
+			fmt.println("SpellbarSlot(emptySlotIdx)", fmt.enum_value_to_string(emptySlotIdx))
+			fmt.println(
+				"inventory.spellbar.spells[emptySlotIdx]",
+				inventory.spellbar.spells[emptySlotIdx],
+			)
+			assert(inventory.spellbar.spells[emptySlotIdx].count == 0)
+			assert(inventory.spellbar.spells[emptySlotIdx].val == .Air)
+
+			inventory.spellbar.spells[emptySlotIdx] = {
 				count = 1,
 				val   = point,
 			}

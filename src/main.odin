@@ -272,9 +272,9 @@ main :: proc() {
 				mouseX = f32(e.motion.x)
 				mouseY = f32(e.motion.y)
 			case .MOUSE_BUTTON_DOWN:
-				if e.button.button == sdl.BUTTON_LEFT {
-					didLeftClickThisFrame = true
-				}
+			// if e.button.button == sdl.BUTTON_LEFT {
+			// 	didLeftClickThisFrame = true
+			// }
 			case:
 				continue
 			}
@@ -283,8 +283,8 @@ main :: proc() {
 			sdl.SetWindowSize(gs.window, i32(gs.screenWidth), i32(gs.screenHeight))
 			vkh.updateSwapchain = true
 			sdl.SyncWindow(gs.window)
-
 		}
+		didLeftClickThisFrame = .LEFT in sdl.GetMouseState(nil, nil)
 		vkh.vulkan_update_swapchain()
 
 		ticksToDo: bit_set[EnergyType] = {}
@@ -347,7 +347,7 @@ main :: proc() {
 			currCamera.front,
 		)
 		if raycastDidHappen && didLeftClickThisFrame {
-			changed, prev := chunk_set_point(raycastPointPos, u16(PointType.Air))
+			changed, prev := chunk_set_point(raycastPointPos, PointType.Air)
 			if changed {
 				inventory_add_item(&inventory, u16_to_point_type(prev))
 			}

@@ -19,7 +19,7 @@ import "core:sync"
 import "core:thread"
 import vk "vendor:vulkan"
 
-chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool, prev: u16) {
+chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool, prev: u16) {
 
 	for x in 0 ..< CHUNKS_PER_DIRECTION {
 		for z in 0 ..< CHUNKS_PER_DIRECTION {
@@ -38,9 +38,10 @@ chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool, prev:
 			assert(indexY >= 0 && indexY < VERTS_PER_Y_DIR)
 			assert(indexZ >= 0 && indexZ < VERTS_PER_Z_DIR)
 
-			chunk_point_edit_add_thread(x, z, indexX, indexY, indexZ, newType)
+			if u16_to_point_type(chunk.points[index_into_point_arrays(indexX, indexY, indexZ)]) == newType do continue
 			changed = true
 			prev = chunk.points[index_into_point_arrays(indexX, indexY, indexZ)]
+			chunk_point_edit_add_thread(x, z, indexX, indexY, indexZ, u16(newType))
 		}
 	}
 	return changed, prev
