@@ -115,6 +115,51 @@ main :: proc() {
 	// device = sdl.CreateGPUDevice({.SPIRV}, true, nil)
 	vkh.vulkan_init()
 	when ODIN_DEBUG do defer vkh.vulkan_cleanup()
+	loadCb, fence := vkh.loader_command_buffer_create()
+
+	font: ui.BMFont
+	inventory: Inventory
+	uiPipeline: vkh.PipelineData
+	{
+
+
+		uiPipeline = ui.init(loadCb)
+		dejaVuPath :=
+			"assets" +
+			filepath.SEPARATOR_STRING +
+			"fonts" +
+			filepath.SEPARATOR_STRING +
+			"DejaVuSans-Bold" +
+			filepath.SEPARATOR_STRING +
+			"DejaVuSans-Bold.json"
+		// ensure(adwaitaFontPathJoinError == nil)
+		font = ui.bmfont_json_load(dejaVuPath, loadCb)
+
+		inventory = inventory_init(loadCb, font)
+
+		vkh.chk(vk.EndCommandBuffer(loadCb))
+		tempCbArr := [?]vk.CommandBuffer{loadCb}
+
+		vkh.chk(
+			vk.QueueSubmit(
+				vkh.queue,
+				1,
+				&vk.SubmitInfo {
+					sType = .SUBMIT_INFO,
+					commandBufferCount = len(tempCbArr),
+					pCommandBuffers = raw_data(tempCbArr[:]),
+				},
+				fence,
+			),
+		)
+	}
+	when ODIN_DEBUG do defer ui.bmfont_destroy(font)
+	when ODIN_DEBUG do defer ui.destroy(uiPipeline)
+	when ODIN_DEBUG do defer inventory_destroy(&inventory)
+	// assert(inventory != {})
+	// assert(uiPipeline != {})
+
+
 	// sdl_ensure(device != nil)
 	// defer sdl.DestroyGPUDevice(device)
 
@@ -136,20 +181,6 @@ main :: proc() {
 	highlightSphere := highlight_sphere_init()
 	when ODIN_DEBUG do defer highlight_sphere_destroy(&highlightSphere)
 
-	loadCb, fence := vkh.loader_command_buffer_create()
-
-	uiPipeline := ui.vk_ui_init(loadCb)
-	when ODIN_DEBUG do defer ui.vk_ui_destroy(uiPipeline)
-	adwaitaFontPath, adwaitaFontPathJoinError := filepath.join(
-		{"assets", "fonts", "AdwaitaSans-Regular", "AdwaitaSans-Regular.json"},
-		context.temp_allocator,
-	)
-	ensure(adwaitaFontPathJoinError == nil)
-	font := ui.bmfont_json_load(adwaitaFontPath, loadCb)
-	when ODIN_DEBUG do defer ui.bmfont_destroy(font)
-
-	vkh.loader_command_buffer_wait_and_destroy(loadCb, fence)
-
 
 	e: sdl.Event
 	quit := false
@@ -169,12 +200,13 @@ main :: proc() {
 	// camera = Camera_new(pos = middleOfMiddleChunkPos)
 
 	free_all(context.temp_allocator)
-	when ODIN_DEBUG {
-		defer vk.DeviceWaitIdle(vkh.vkDevice)
-	}
+	when ODIN_DEBUG do defer vk.DeviceWaitIdle(vkh.device)
+
 
 	didLeftClickThisFrame := false
 	mouseX, mouseY: f32
+
+	vkh.loader_command_buffer_wait_and_destroy(loadCb, fence)
 
 	for !quit {
 		tracy.FrameMark()
@@ -208,13 +240,32 @@ main :: proc() {
 				switch e.key.key {
 				case sdl.K_ESCAPE:
 					quit = true
+				case sdl.K_1:
+					spellbar_select(&inventory, 1)
+				case sdl.K_2:
+					spellbar_select(&inventory, 2)
+				case sdl.K_3:
+					spellbar_select(&inventory, 3)
+				case sdl.K_4:
+					spellbar_select(&inventory, 4)
+				case sdl.K_5:
+					spellbar_select(&inventory, 5)
+				case sdl.K_6:
+					spellbar_select(&inventory, 6)
+				case sdl.K_7:
+					spellbar_select(&inventory, 7)
+				case sdl.K_8:
+					spellbar_select(&inventory, 8)
+				case sdl.K_9:
+					spellbar_select(&inventory, 9)
+
 				}
 
 
 			case .WINDOW_RESIZED:
 				gs.screenWidth, gs.screenHeight = u32(e.window.data1), u32(e.window.data2)
 				if gs.screenWidth != prevScreenWidth || gs.screenHeight != prevScreenHeight {
-					vkh.vkUpdateSwapchain = true
+					vkh.updateSwapchain = true
 				}
 			case .MOUSE_MOTION:
 				camera.Camera_process_mouse_movement(&currCamera, e.motion.xrel, e.motion.yrel)
@@ -230,7 +281,7 @@ main :: proc() {
 		}
 		if prevScreenWidth != gs.screenWidth || prevScreenHeight != gs.screenHeight {
 			sdl.SetWindowSize(gs.window, i32(gs.screenWidth), i32(gs.screenHeight))
-			vkh.vkUpdateSwapchain = true
+			vkh.updateSwapchain = true
 			sdl.SyncWindow(gs.window)
 
 		}
@@ -272,14 +323,14 @@ main :: proc() {
 		// fmt.println("camera pos", camera.pos)
 		view, proj := camera.Camera_view_proj(&currCamera)
 		cameraPtr: rawptr
-		vma.map_memory(vkh.vkAllocator, vkh.cameraBuffers[vkh.vkFrameIndex].alloc, &cameraPtr)
+		vma.map_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc, &cameraPtr)
 		currCameraUBO := vkh.CameraUBO {
 			view = view,
 			proj = proj,
 		}
 
 		mem.copy(cameraPtr, &currCameraUBO, size_of(currCameraUBO))
-		vma.unmap_memory(vkh.vkAllocator, vkh.cameraBuffers[vkh.vkFrameIndex].alloc)
+		vma.unmap_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc)
 
 
 		//TODO. I FORGOT CAMERA HAS F32 AS POSITION AND NOT I32. THAT MIGHT MEAN THAT TRAVELLING FAR TO I32 IS GOING TO CAUSE PROBLEMS
@@ -296,28 +347,31 @@ main :: proc() {
 			currCamera.front,
 		)
 		if raycastDidHappen && didLeftClickThisFrame {
-			chunk_set_point(raycastPointPos, u16(PointType.Air))
+			changed, prev := chunk_set_point(raycastPointPos, u16(PointType.Air))
+			if changed {
+				inventory_add_item(&inventory, u16_to_point_type(prev))
+			}
 		}
 		// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 
 		// vkh.vulkan_update_swapchain()
-		vkh.chk(vk.WaitForFences(vkh.vkDevice, 1, &vkh.vkFences[vkh.vkFrameIndex], true, max(u64)))
-		vkh.vk_run_deferred_buffer_releases(vkh.vkFrameIndex)
+		vkh.chk(vk.WaitForFences(vkh.device, 1, &vkh.fences[vkh.frameIndex], true, max(u64)))
+		vkh.vk_run_deferred_buffer_releases(vkh.frameIndex)
 
-		vkh.chk(vk.ResetFences(vkh.vkDevice, 1, &vkh.vkFences[vkh.vkFrameIndex]))
+		vkh.chk(vk.ResetFences(vkh.device, 1, &vkh.fences[vkh.frameIndex]))
 		vkh.vk_chk_swapchain(
 			vk.AcquireNextImageKHR(
-				vkh.vkDevice,
-				vkh.vkSwapchain,
+				vkh.device,
+				vkh.swapchain,
 				max(u64),
-				vkh.vkPresentSemaphores[vkh.vkFrameIndex],
+				vkh.presentSemaphores[vkh.frameIndex],
 				vk.Fence{},
 				&vkh.imageIndex,
 			),
 		)
 
 
-		cb := vkh.vkDrawCommandBuffers[vkh.vkFrameIndex]
+		cb := vkh.drawCommandBuffers[vkh.frameIndex]
 		vkh.chk(vk.ResetCommandBuffer(cb, {}))
 
 		vkh.chk(
@@ -335,7 +389,7 @@ main :: proc() {
 				dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
 				oldLayout = .UNDEFINED,
 				newLayout = .ATTACHMENT_OPTIMAL,
-				image = vkh.vkSwapchainImages[vkh.imageIndex],
+				image = vkh.swapchainImages[vkh.imageIndex],
 				subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 			},
 			{
@@ -346,7 +400,7 @@ main :: proc() {
 				dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
 				oldLayout = .UNDEFINED,
 				newLayout = .ATTACHMENT_OPTIMAL,
-				image = vkh.vkDepthImage,
+				image = vkh.depthImage,
 				subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
 			},
 		}
@@ -367,7 +421,7 @@ main :: proc() {
 				colorAttachmentCount = 1,
 				pColorAttachments = &vk.RenderingAttachmentInfo {
 					sType = .RENDERING_ATTACHMENT_INFO,
-					imageView = vkh.vkSwpachainImageViews[vkh.imageIndex],
+					imageView = vkh.swpachainImageViews[vkh.imageIndex],
 					imageLayout = .ATTACHMENT_OPTIMAL,
 					loadOp = .CLEAR,
 					storeOp = .STORE,
@@ -375,7 +429,7 @@ main :: proc() {
 				},
 				pDepthAttachment = &vk.RenderingAttachmentInfo {
 					sType = .RENDERING_ATTACHMENT_INFO,
-					imageView = vkh.vkDepthImageView,
+					imageView = vkh.depthImageView,
 					imageLayout = .ATTACHMENT_OPTIMAL,
 					loadOp = .CLEAR,
 					storeOp = .DONT_CARE,
@@ -390,7 +444,7 @@ main :: proc() {
 			highlight_sphere_draw(
 				cb,
 				&highlightSphere,
-				vkh.cameraBuffers[vkh.vkFrameIndex].buffer,
+				vkh.cameraBuffers[vkh.frameIndex].buffer,
 				vk.DeviceSize(size_of(vkh.CameraUBO)),
 				raycastPointPos,
 				f32(gs.totalTime),
@@ -401,18 +455,17 @@ main :: proc() {
 		chunks_draw(
 			cb,
 			&pointPipeline,
-			vkh.cameraBuffers[vkh.vkFrameIndex].buffer,
+			vkh.cameraBuffers[vkh.frameIndex].buffer,
 			vk.DeviceSize(size_of(vkh.CameraUBO)),
 			&currCamera,
 		)
 
 
-		ui.add_rect(10, f32(gs.screenHeight - 200), 200, 200, [4]f32{.03, .27, .86, 1})
-		ui.add_rect(10, 10, 200, 200, [4]f32{.07, .2, .16, 1})
+		spellbar_render(&inventory)
 		ui.add_text("TAKING SOULS", font, 32, 20, 20, [4]f32{1, 1, 1, 1})
-		fmt.println("len vkuibatches", small_array.len(ui.vkUiBatches))
 
-		ui.ui_render_ui(cb, uiPipeline)
+
+		ui.render(cb, uiPipeline)
 
 		vk.CmdEndRendering(cb)
 
@@ -429,7 +482,7 @@ main :: proc() {
 					dstAccessMask = {},
 					oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
 					newLayout = .PRESENT_SRC_KHR,
-					image = vkh.vkSwapchainImages[vkh.imageIndex],
+					image = vkh.swapchainImages[vkh.imageIndex],
 					subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 				},
 			},
@@ -438,34 +491,34 @@ main :: proc() {
 		waitStage: vk.PipelineStageFlags = {.COLOR_ATTACHMENT_OUTPUT}
 		vkh.chk(
 			vk.QueueSubmit(
-				vkh.vkQueue,
+				vkh.queue,
 				1,
 				&vk.SubmitInfo {
 					sType = .SUBMIT_INFO,
 					waitSemaphoreCount = 1,
-					pWaitSemaphores = &vkh.vkPresentSemaphores[vkh.vkFrameIndex],
+					pWaitSemaphores = &vkh.presentSemaphores[vkh.frameIndex],
 					pWaitDstStageMask = &waitStage,
 					commandBufferCount = 1,
 					pCommandBuffers = &cb,
 					signalSemaphoreCount = 1,
-					pSignalSemaphores = &vkh.vkRenderSemaphores[vkh.imageIndex],
+					pSignalSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
 				},
-				vkh.vkFences[vkh.vkFrameIndex],
+				vkh.fences[vkh.frameIndex],
 			),
 		)
-		vkh.vkFrameIndex = (vkh.vkFrameIndex + 1) % vkh.MAX_FRAMES_IN_FLIGHT
+		vkh.frameIndex = (vkh.frameIndex + 1) % vkh.MAX_FRAMES_IN_FLIGHT
 
-		ui.ui_frame_reset()
+		ui.frame_reset()
 
 		vkh.vk_chk_swapchain(
 			vk.QueuePresentKHR(
-				vkh.vkQueue,
+				vkh.queue,
 				&{
 					sType = .PRESENT_INFO_KHR,
 					waitSemaphoreCount = 1,
-					pWaitSemaphores = &vkh.vkRenderSemaphores[vkh.imageIndex],
+					pWaitSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
 					swapchainCount = 1,
-					pSwapchains = &vkh.vkSwapchain,
+					pSwapchains = &vkh.swapchain,
 					pImageIndices = &vkh.imageIndex,
 				},
 			),

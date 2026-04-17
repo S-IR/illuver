@@ -2,7 +2,6 @@ package main
 import "algorithms"
 import "core:fmt"
 import "core:math"
-
 make_point :: #force_inline proc(pt: PointType, light, life, wisdom: u16) -> u16 {
 	p := u16(pt)
 	p = set_light(p, light)

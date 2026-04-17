@@ -2,6 +2,8 @@
 
 #define SOLID_MODE 0
 #define TEXT_MODE 1
+#define IMAGE_MODE  2
+
 layout(push_constant) uniform PushConstants {
     mat4 ortho;
     vec4 color;
@@ -33,6 +35,12 @@ float median(vec3 v) {
 void main() {
     if (pc.mode == SOLID_MODE) {
         out_color = pc.color;
+        return;
+    }
+
+    if (pc.mode == IMAGE_MODE) {
+        vec4 texColor = texture(fontAtlas, uv);
+        out_color = texColor * pc.color;
         return;
     }
 

@@ -15,7 +15,7 @@ ImageLoaderInputs :: struct {
 }
 vkUiNextTextureID := VK_UI_DUMMY_TEXTURE_ID + 1
 
-load_gltf_image :: proc(
+load_image :: proc(
 	pi: ImageLoaderInputs,
 	cb: vk.CommandBuffer,
 	giveID := true,
@@ -29,7 +29,7 @@ load_gltf_image :: proc(
 
 	chk(
 		vma.create_image(
-			vkAllocator,
+			allocator,
 			{
 				sType = .IMAGE_CREATE_INFO,
 				imageType = .D2,
@@ -49,16 +49,16 @@ load_gltf_image :: proc(
 		),
 	)
 
-	poolIndex := small_array.len(deferredBufferReleases[vkFrameIndex])
-	small_array.append(&deferredBufferReleases[vkFrameIndex], VkBufferPoolElem{})
+	poolIndex := small_array.len(deferredBufferReleases[frameIndex])
+	small_array.append(&deferredBufferReleases[frameIndex], VkBufferPoolElem{})
 
-	poolElem := small_array.get_ptr(&deferredBufferReleases[vkFrameIndex], poolIndex)
+	poolElem := small_array.get_ptr(&deferredBufferReleases[frameIndex], poolIndex)
 	imgSrcBuffer := &poolElem.buffer
 	imgSrcAllocation := &poolElem.alloc
 
 	chk(
 		vma.create_buffer(
-			vkAllocator,
+			allocator,
 			{
 				sType = .BUFFER_CREATE_INFO,
 				size = vk.DeviceSize(pi.width * pi.height * pi.channels),
@@ -71,7 +71,7 @@ load_gltf_image :: proc(
 		),
 	)
 	imgSrcBufferPtr: rawptr
-	chk(vma.map_memory(vkAllocator, imgSrcAllocation^, &imgSrcBufferPtr))
+	chk(vma.map_memory(allocator, imgSrcAllocation^, &imgSrcBufferPtr))
 	mem.copy(imgSrcBufferPtr, pi.data, int(pi.width) * int(pi.height) * int(pi.channels))
 
 
@@ -86,7 +86,7 @@ load_gltf_image :: proc(
 		image = texture.image,
 		subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 	}
-	vma.unmap_memory(vkAllocator, imgSrcAllocation^)
+	vma.unmap_memory(allocator, imgSrcAllocation^)
 	vk.CmdPipelineBarrier2(
 		cb,
 		&vk.DependencyInfo {
@@ -133,7 +133,7 @@ load_gltf_image :: proc(
 
 	chk(
 		vk.CreateImageView(
-			vkDevice,
+			device,
 			&vk.ImageViewCreateInfo {
 				sType = .IMAGE_VIEW_CREATE_INFO,
 				image = texture.image,
@@ -154,7 +154,7 @@ load_gltf_image :: proc(
 
 	chk(
 		vk.CreateSampler(
-			vkDevice,
+			device,
 			&vk.SamplerCreateInfo {
 				sType = .SAMPLER_CREATE_INFO,
 				magFilter = .LINEAR,
@@ -181,4 +181,9 @@ load_gltf_image :: proc(
 
 	}
 	return texture
+}
+gpu_texture_destroy :: proc(t: GPUTexture) {
+	if t.descriptor.imageView != {} do vk.DestroyImageView(device, t.descriptor.imageView, nil)
+	if t.descriptor.sampler != {} do vk.DestroySampler(device, t.descriptor.sampler, nil)
+	if t.image != {} do vma.destroy_image(allocator, t.image, t.allocation)
 }

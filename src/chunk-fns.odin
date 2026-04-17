@@ -19,7 +19,7 @@ import "core:sync"
 import "core:thread"
 import vk "vendor:vulkan"
 
-chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool) {
+chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool, prev: u16) {
 
 	for x in 0 ..< CHUNKS_PER_DIRECTION {
 		for z in 0 ..< CHUNKS_PER_DIRECTION {
@@ -40,9 +40,10 @@ chunk_set_point :: proc(worldPos: [3]f32, newType: u16) -> (changed: bool) {
 
 			chunk_point_edit_add_thread(x, z, indexX, indexY, indexZ, newType)
 			changed = true
+			prev = chunk.points[index_into_point_arrays(indexX, indexY, indexZ)]
 		}
 	}
-	return changed
+	return changed, prev
 }
 chunks_frame_update :: proc(c: ^camera.Camera) {
 

@@ -1,16 +1,9 @@
 package main
-import "algorithms"
-import "core:fmt"
-import "core:math"
-import "core:math/linalg"
-import "core:math/rand"
-import "core:mem"
-import "core:path/filepath"
 import "core:time"
-import "gs"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 import "vkh"
+
 Point_r: struct {
 	pipeline: ^sdl.GPUGraphicsPipeline,
 } = {}
@@ -82,40 +75,36 @@ EnergyType :: enum {
 	Wisdom,
 }
 
-when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
-	PointType :: f32
-} else {
-	PointType :: enum u16 {
-		Air,
-		YellowDirt,
-		PurpleGround,
-		LightPurpleGround,
-		BlueDiamond,
-		BlackCliff,
-		PinkTrunk,
-		WhiteTreeLeaf,
-		Water,
-	}
-	#assert(len(PointType) < 1024)
+PointType :: enum u16 {
+	Air,
+	YellowDirt,
+	PurpleGround,
+	LightPurpleGround,
+	BlueDiamond,
+	BlackCliff,
+	PinkTrunk,
+	WhiteTreeLeaf,
+	Water,
+}
+#assert(len(PointType) < 1024)
 
-	Random_Colors_Per_Point_Type := [PointType][4]f32 {
-		.Air               = {},
-		.YellowDirt        = {159.0 / 255.0, 112.0 / 255.0, 75.0 / 255.0, 1},
-		.PurpleGround      = {36.0 / 255.0, 19.0 / 255.0, 97.0 / 255.0, 1},
-		// .LightPurpleGround = {
-		// 	{0, 0, 0, 1},
-		// 	{0, 1, 0, 1},
-		// 	{1, 0, 0, 1},
-		// 	{1, 1, 0, 1},
-		// 	{1, 1, 1, 1},
-		// },
-		.LightPurpleGround = {141.0 / 255.0, 97.0 / 255.0, 237.0 / 255.0, 1},
-		.BlueDiamond       = {0.0 / 255.0, 236.0 / 255.0, 231.0 / 255.0, 1},
-		.BlackCliff        = {31.0 / 255.0, 22.0 / 255.0, 25.0 / 255.0, 1},
-		.PinkTrunk         = {229.0 / 255.0, 108.0 / 255.0, 125.0 / 255.0, 1},
-		.WhiteTreeLeaf     = {218.0 / 255.0, 189.0 / 255.0, 252.0 / 255.0, 1},
-		.Water             = {68.0 / 255.0, 131.0 / 255.0, 129.0 / 255.0, 1},
-	}
+Random_Colors_Per_Point_Type := [PointType][4]f32 {
+	.Air               = {},
+	.YellowDirt        = {159.0 / 255.0, 112.0 / 255.0, 75.0 / 255.0, 1},
+	.PurpleGround      = {36.0 / 255.0, 19.0 / 255.0, 97.0 / 255.0, 1},
+	// .LightPurpleGround = {
+	// 	{0, 0, 0, 1},
+	// 	{0, 1, 0, 1},
+	// 	{1, 0, 0, 1},
+	// 	{1, 1, 0, 1},
+	// 	{1, 1, 1, 1},
+	// },
+	.LightPurpleGround = {141.0 / 255.0, 97.0 / 255.0, 237.0 / 255.0, 1},
+	.BlueDiamond       = {0.0 / 255.0, 236.0 / 255.0, 231.0 / 255.0, 1},
+	.BlackCliff        = {31.0 / 255.0, 22.0 / 255.0, 25.0 / 255.0, 1},
+	.PinkTrunk         = {229.0 / 255.0, 108.0 / 255.0, 125.0 / 255.0, 1},
+	.WhiteTreeLeaf     = {218.0 / 255.0, 189.0 / 255.0, 252.0 / 255.0, 1},
+	.Water             = {68.0 / 255.0, 131.0 / 255.0, 129.0 / 255.0, 1},
 }
 BottomFacedIndices := [?]u16{0, 1, 2, 0, 2, 3}
 
@@ -142,7 +131,7 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 	vkh.chk(
 		vk.CreateDescriptorSetLayout(
-			vkh.vkDevice,
+			vkh.device,
 			&vk.DescriptorSetLayoutCreateInfo {
 				sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 				flags = {.PUSH_DESCRIPTOR_KHR},
@@ -158,15 +147,15 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 	VERT_SPV :: #load("../build/shader-binaries/point.vertex.spv")
 	FRAG_SPV :: #load("../build/shader-binaries/point.fragment.spv")
 
-	vertModule := vkh.create_shader_module(vkh.vkDevice, VERT_SPV)
-	fragModule := vkh.create_shader_module(vkh.vkDevice, FRAG_SPV)
+	vertModule := vkh.create_shader_module(vkh.device, VERT_SPV)
+	fragModule := vkh.create_shader_module(vkh.device, FRAG_SPV)
 
-	defer vk.DestroyShaderModule(vkh.vkDevice, vertModule, nil)
-	defer vk.DestroyShaderModule(vkh.vkDevice, fragModule, nil)
+	defer vk.DestroyShaderModule(vkh.device, vertModule, nil)
+	defer vk.DestroyShaderModule(vkh.device, fragModule, nil)
 	// --- Pipeline layout ---
 	vkh.chk(
 		vk.CreatePipelineLayout(
-			vkh.vkDevice,
+			vkh.device,
 			&vk.PipelineLayoutCreateInfo {
 				sType = .PIPELINE_LAYOUT_CREATE_INFO,
 				setLayoutCount = 1,
@@ -206,7 +195,7 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 	// --- Graphics pipeline ---
 	vkh.chk(
 		vk.CreateGraphicsPipelines(
-			vkh.vkDevice,
+			vkh.device,
 			{},
 			1,
 			&vk.GraphicsPipelineCreateInfo {
@@ -214,8 +203,8 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 				pNext = &vk.PipelineRenderingCreateInfo {
 					sType = .PIPELINE_RENDERING_CREATE_INFO,
 					colorAttachmentCount = 1,
-					pColorAttachmentFormats = &vkh.vkSwapchainImageFormat,
-					depthAttachmentFormat = vkh.vkDepthFormat,
+					pColorAttachmentFormats = &vkh.swapchainImageFormat,
+					depthAttachmentFormat = vkh.depthFormat,
 				},
 				stageCount = len(pipelineStages),
 				pStages = raw_data(pipelineStages[:]),
@@ -276,11 +265,11 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 
 pipeline_data_delete :: proc(p: vkh.PipelineData) {
-	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkh.vkDevice, p.descriptorSetLayout, nil)
+	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkh.device, p.descriptorSetLayout, nil)
 
-	if p.layout != {} do vk.DestroyPipelineLayout(vkh.vkDevice, p.layout, nil)
+	if p.layout != {} do vk.DestroyPipelineLayout(vkh.device, p.layout, nil)
 
-	if p.graphicsPipeline != {} do vk.DestroyPipeline(vkh.vkDevice, p.graphicsPipeline, nil)
+	if p.graphicsPipeline != {} do vk.DestroyPipeline(vkh.device, p.graphicsPipeline, nil)
 
 }
 
@@ -344,9 +333,9 @@ triangle_decide_color :: proc "contextless" (points: [3]u16) -> [4]f32 {
 		energy := energy_to_color(points[i])
 
 		combined := [3]f32 {
-			base[0] * 0.6 + energy[0] * 0.4,
-			base[1] * 0.6 + energy[1] * 0.4,
-			base[2] * 0.6 + energy[2] * 0.4,
+			base[0] * 0.9 + energy[0] * 0.1,
+			base[1] * 0.9 + energy[1] * 0.1,
+			base[2] * 0.9 + energy[2] * 0.1,
 		}
 
 		finalColor[0] += combined[0]

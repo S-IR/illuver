@@ -30,7 +30,7 @@ highlight_sphere_init :: proc() -> (h: HighlightSphere) {
 
 		vkh.chk(
 			vma.create_buffer(
-				vkh.vkAllocator,
+				vkh.allocator,
 				{
 					sType = .BUFFER_CREATE_INFO,
 					size = vk.DeviceSize(len(spherePrimitives.vertices) * size_of([3]f32)),
@@ -46,7 +46,7 @@ highlight_sphere_init :: proc() -> (h: HighlightSphere) {
 
 		vkh.chk(
 			vma.create_buffer(
-				vkh.vkAllocator,
+				vkh.allocator,
 				{
 					sType = .BUFFER_CREATE_INFO,
 					size = vk.DeviceSize(
@@ -64,24 +64,24 @@ highlight_sphere_init :: proc() -> (h: HighlightSphere) {
 
 	{
 		vertBufferPtr: rawptr
-		vkh.chk(vma.map_memory(vkh.vkAllocator, h.vertexBuffer.alloc, &vertBufferPtr))
+		vkh.chk(vma.map_memory(vkh.allocator, h.vertexBuffer.alloc, &vertBufferPtr))
 
 		mem.copy(
 			vertBufferPtr,
 			raw_data(spherePrimitives.vertices),
 			len(spherePrimitives.vertices) * size_of(spherePrimitives.vertices[0]),
 		)
-		vma.unmap_memory(vkh.vkAllocator, h.vertexBuffer.alloc)
+		vma.unmap_memory(vkh.allocator, h.vertexBuffer.alloc)
 
 
 		indexBufferPtr: rawptr
-		vkh.chk(vma.map_memory(vkh.vkAllocator, h.indexBuffer.alloc, &indexBufferPtr))
+		vkh.chk(vma.map_memory(vkh.allocator, h.indexBuffer.alloc, &indexBufferPtr))
 		mem.copy(
 			indexBufferPtr,
 			raw_data(spherePrimitives.indices),
 			len(spherePrimitives.indices) * size_of(spherePrimitives.indices[0]),
 		)
-		vma.unmap_memory(vkh.vkAllocator, h.indexBuffer.alloc)
+		vma.unmap_memory(vkh.allocator, h.indexBuffer.alloc)
 
 	}
 	return h
@@ -105,7 +105,7 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 	vkh.chk(
 		vk.CreateDescriptorSetLayout(
-			vkh.vkDevice,
+			vkh.device,
 			&{
 				sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 				flags = {.PUSH_DESCRIPTOR_KHR},
@@ -119,11 +119,11 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 	HIGHLIGHT_SPHERE_VERT_SPV :: #load("../build/shader-binaries/highlight-sphere.vertex.spv")
 	HIGHLIGHT_SPHERE_FRAG_SPV :: #load("../build/shader-binaries/highlight-sphere.fragment.spv")
-	vert := vkh.create_shader_module(vkh.vkDevice, HIGHLIGHT_SPHERE_VERT_SPV)
-	frag := vkh.create_shader_module(vkh.vkDevice, HIGHLIGHT_SPHERE_FRAG_SPV)
+	vert := vkh.create_shader_module(vkh.device, HIGHLIGHT_SPHERE_VERT_SPV)
+	frag := vkh.create_shader_module(vkh.device, HIGHLIGHT_SPHERE_FRAG_SPV)
 
-	defer vk.DestroyShaderModule(vkh.vkDevice, vert, nil)
-	defer vk.DestroyShaderModule(vkh.vkDevice, frag, nil)
+	defer vk.DestroyShaderModule(vkh.device, vert, nil)
+	defer vk.DestroyShaderModule(vkh.device, frag, nil)
 
 	pushRange := vk.PushConstantRange {
 		stageFlags = {.VERTEX},
@@ -133,7 +133,7 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 	vkh.chk(
 		vk.CreatePipelineLayout(
-			vkh.vkDevice,
+			vkh.device,
 			&vk.PipelineLayoutCreateInfo {
 				sType = .PIPELINE_LAYOUT_CREATE_INFO,
 				setLayoutCount = 1,
@@ -172,7 +172,7 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 	vkh.chk(
 		vk.CreateGraphicsPipelines(
-			vkh.vkDevice,
+			vkh.device,
 			{},
 			1,
 			&vk.GraphicsPipelineCreateInfo {
@@ -180,8 +180,8 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 				pNext = &vk.PipelineRenderingCreateInfo {
 					sType = .PIPELINE_RENDERING_CREATE_INFO,
 					colorAttachmentCount = 1,
-					pColorAttachmentFormats = &vkh.vkSwapchainImageFormat,
-					depthAttachmentFormat = vkh.vkDepthFormat,
+					pColorAttachmentFormats = &vkh.swapchainImageFormat,
+					depthAttachmentFormat = vkh.depthFormat,
 				},
 				stageCount = len(stages),
 				pStages = raw_data(stages[:]),
@@ -315,7 +315,7 @@ highlight_sphere_draw :: proc(
 	)
 
 	cameraInfo := vk.DescriptorBufferInfo {
-		buffer = vkh.cameraBuffers[vkh.vkFrameIndex].buffer,
+		buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
 		offset = 0,
 		range  = vkh.CameraUBOSize,
 	}
@@ -335,20 +335,20 @@ highlight_sphere_draw :: proc(
 }
 highlight_sphere_destroy :: proc(sphere: ^HighlightSphere) {
 	if sphere.vertexBuffer.alloc != {} {
-		vma.destroy_buffer(vkh.vkAllocator, sphere.vertexBuffer.buffer, sphere.vertexBuffer.alloc)
+		vma.destroy_buffer(vkh.allocator, sphere.vertexBuffer.buffer, sphere.vertexBuffer.alloc)
 	}
 	if sphere.indexBuffer.alloc != {} {
-		vma.destroy_buffer(vkh.vkAllocator, sphere.indexBuffer.buffer, sphere.indexBuffer.alloc)
+		vma.destroy_buffer(vkh.allocator, sphere.indexBuffer.buffer, sphere.indexBuffer.alloc)
 	}
 
 	if sphere.pipeline.graphicsPipeline != {} {
-		vk.DestroyPipeline(vkh.vkDevice, sphere.pipeline.graphicsPipeline, nil)
+		vk.DestroyPipeline(vkh.device, sphere.pipeline.graphicsPipeline, nil)
 	}
 	if sphere.pipeline.layout != {} {
-		vk.DestroyPipelineLayout(vkh.vkDevice, sphere.pipeline.layout, nil)
+		vk.DestroyPipelineLayout(vkh.device, sphere.pipeline.layout, nil)
 	}
 	if sphere.pipeline.descriptorSetLayout != {} {
-		vk.DestroyDescriptorSetLayout(vkh.vkDevice, sphere.pipeline.descriptorSetLayout, nil)
+		vk.DestroyDescriptorSetLayout(vkh.device, sphere.pipeline.descriptorSetLayout, nil)
 	}
 
 	sphere^ = {}

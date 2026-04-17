@@ -16,98 +16,16 @@ import "core:strings"
 import sdl "vendor:sdl3"
 import stbImage "vendor:stb/image"
 import vk "vendor:vulkan"
-Glyph :: struct {
-	id:               i32,
-	x, y:             i32,
-	width, height:    i32,
-	xoffset, yoffset: i32,
-	xadvance:         i32,
-}
-Kerning :: struct {
-	first, second: i32,
-	amount:        i32,
-}
-BMFont_Info :: struct {
-	face: string,
-	size: i32,
-	// ... other fields if needed
-}
-BMFont_Common :: struct {
-	lineHeight:     i32,
-	base:           i32,
-	scaleW, scaleH: i32,
-	// pages, etc.
-}
-BMFont :: struct {
-	info:     BMFont_Info,
-	common:   BMFont_Common,
-	pages:    []string,
-	chars:    []Glyph,
-	kernings: []Kerning,
-	glyphMap: map[rune]Glyph,
-	texture:  vkh.GPUTexture,
-}
-bmfont_json_load :: proc(
-	path: string,
-	cb: vk.CommandBuffer,
-	alloc := context.allocator,
-) -> (
-	font: BMFont,
-) {
-	assert(os.exists(path))
-	fileBytes, osErr := os.read_entire_file_from_path(path, context.temp_allocator)
-	if osErr != nil do log.fatalf("[UI] error opening BMFONT JSON file: %s", os.error_string(osErr))
-	when ODIN_DEBUG {
-		parsed, jsonErr := json.parse(fileBytes, allocator = context.temp_allocator)
-		if jsonErr != nil do log.fatalf("[UI] error parsing BMFONT json: %s", fmt.enum_value_to_string(jsonErr))
-	}
-	unmarshallErr := json.unmarshal(fileBytes, &font, allocator = context.temp_allocator)
-	if unmarshallErr != nil do log.fatalf("[UI] error unmarshalling BMFONT json: %s", fmt.enum_value_to_string(unmarshallErr))
-	assert(len(font.pages) > 0)
-	pngPath := font.pages[0]
-	dir := filepath.dir(path, context.temp_allocator)
-	pngFinalPath, err := filepath.join({dir, pngPath}, context.temp_allocator)
-	ensure(err == nil)
-	pngFinalPathCString := strings.clone_to_cstring(pngFinalPath, context.temp_allocator)
-	assert(os.exists(pngFinalPath))
-	inputs: vkh.ImageLoaderInputs
-	DESIRED_CHANNELS :: 4
-	inputs.data = stbImage.load(
-		pngFinalPathCString,
-		&inputs.width,
-		&inputs.height,
-		nil,
-		DESIRED_CHANNELS,
-	)
-	assert(inputs.data != nil)
-	defer stbImage.image_free(inputs.data)
-	inputs.magFilter = .LINEAR
-	inputs.minFilter = .LINEAR
-	inputs.channels = DESIRED_CHANNELS
-	font.texture = vkh.load_gltf_image(inputs, cb)
-	font.glyphMap = make(map[rune]Glyph, len(font.chars), alloc)
-	for &g in font.chars {
-		font.glyphMap[rune(g.id)] = g
-	}
-	return font
-}
-bmfont_destroy :: proc(f: BMFont) {
-	delete(f.glyphMap)
-	view := f.texture.descriptor.imageView
-	if view != {} do vk.DestroyImageView(vkh.vkDevice, view, nil)
-	sampler := f.texture.descriptor.sampler
-	if sampler != {} do vk.DestroySampler(vkh.vkDevice, sampler, nil)
-	image := f.texture.image
-	if image != {} do vma.destroy_image(vkh.vkAllocator, image, f.texture.allocation)
-}
-TextVertex :: struct {
-	pos: [2]f32,
-	uv:  [2]f32,
-}
+
 UIBatchMode :: enum (u32) {
 	Solid,
 	Text,
+	Image,
 }
+
+//u32 for glsl
+#assert(size_of(UIBatchMode) == size_of(u32))
+
 UIPushConstants :: struct #align (16) {
 	ortho:   matrix[4, 4]f32,
 	color:   [4]f32,
@@ -139,18 +57,18 @@ ui_create_dummy_texture :: proc(cb: vk.CommandBuffer) {
 	inputs.channels = 4
 	inputs.magFilter = .NEAREST
 	inputs.minFilter = .NEAREST
-	vkDummyTexture = vkh.load_gltf_image(inputs, cb, false)
+	vkDummyTexture = vkh.load_image(inputs, cb, false)
 	vkDummyTexture.id = VK_UI_DUMMY_TEXTURE_ID
 }
 // vkTextFonts: small_array.Small_Array(MAX_TEXT_FONTS, UIBatch)
 vkUIVertexBuffers: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem
-vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
+init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 	ui_create_dummy_texture(cb)
 
 	for &bufferElem in vkUIVertexBuffers {
 		vkh.chk(
 			vma.create_buffer(
-				vkh.vkAllocator,
+				vkh.allocator,
 				{
 					sType = .BUFFER_CREATE_INFO,
 					size = vk.DeviceSize(MAX_UI_BATCHES * MAX_UI_VERTS * size_of(TextVertex)),
@@ -175,7 +93,7 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 	}
 	vkh.chk(
 		vk.CreateDescriptorSetLayout(
-			vkh.vkDevice,
+			vkh.device,
 			&{
 				sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 				bindingCount = len(layoutBindings),
@@ -192,7 +110,7 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 	}
 	vkh.chk(
 		vk.CreatePipelineLayout(
-			vkh.vkDevice,
+			vkh.device,
 			&{
 				sType = .PIPELINE_LAYOUT_CREATE_INFO,
 				setLayoutCount = 1,
@@ -222,10 +140,10 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 	VERT_SPV :: #load("../../build/shader-binaries/ui.vertex.spv")
 	FRAG_SPV :: #load("../../build/shader-binaries/ui.fragment.spv")
 
-	vertModule := vkh.create_shader_module(vkh.vkDevice, VERT_SPV)
-	fragModule := vkh.create_shader_module(vkh.vkDevice, FRAG_SPV)
-	defer vk.DestroyShaderModule(vkh.vkDevice, vertModule, nil)
-	defer vk.DestroyShaderModule(vkh.vkDevice, fragModule, nil)
+	vertModule := vkh.create_shader_module(vkh.device, VERT_SPV)
+	fragModule := vkh.create_shader_module(vkh.device, FRAG_SPV)
+	defer vk.DestroyShaderModule(vkh.device, vertModule, nil)
+	defer vk.DestroyShaderModule(vkh.device, fragModule, nil)
 	shaderStages := [?]vk.PipelineShaderStageCreateInfo {
 		{
 			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -246,8 +164,8 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 		pNext               = &vk.PipelineRenderingCreateInfo {
 			sType = .PIPELINE_RENDERING_CREATE_INFO,
 			colorAttachmentCount = 1,
-			pColorAttachmentFormats = &vkh.vkSwapchainImageFormat,
-			depthAttachmentFormat = vkh.vkDepthFormat,
+			pColorAttachmentFormats = &vkh.swapchainImageFormat,
+			depthAttachmentFormat = vkh.depthFormat,
 		},
 		pStages             = raw_data(shaderStages[:]),
 		pVertexInputState   = &vk.PipelineVertexInputStateCreateInfo {
@@ -306,101 +224,14 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 		layout              = p.layout,
 		subpass             = 0,
 	}
-	vkh.chk(vk.CreateGraphicsPipelines(vkh.vkDevice, 0, 1, &pipelineCi, nil, &p.graphicsPipeline))
+	vkh.chk(vk.CreateGraphicsPipelines(vkh.device, 0, 1, &pipelineCi, nil, &p.graphicsPipeline))
 	return p
 }
-ui_frame_reset :: proc() {
+frame_reset :: proc() {
 	small_array.clear(&vkUiBatches)
 }
-add_text :: proc(str: string, font: BMFont, fontSize: f32, posX, posY: f32, color: [4]f32) {
-	assert(len(str) != 0)
-	assert(font.info.size != 0)
-	assert(font.glyphMap != nil)
-	assert(fontSize != 0)
-	assert(font.texture.id != VK_UI_DUMMY_TEXTURE_ID)
-	for c in color do assert(c <= 1 && c >= 0)
-	scale := fontSize / f32(font.info.size)
-	penX := posX
-	penY := posY
-	prevId: i32 = -1
-	batchIdx := -1
-	batch: ^UIBatch
-	for &b, i in small_array.slice(&vkUiBatches) {
-		if b.mode == .Text && font.texture.id == b.textureID && b.color == color {
-			batchIdx = i
-			break
-		}
-	}
-	if batchIdx == -1 {
-		idx := small_array.len(vkUiBatches)
-		small_array.append_elem(&vkUiBatches, UIBatch{})
-		batch = small_array.get_ptr(&vkUiBatches, idx)
-		batch.descriptor = font.texture.descriptor
-		batch.color = color
-		batch.mode = .Text
-		batch.textureID = font.texture.id
-		batchIdx = idx
-	} else {
-		batch = small_array.get_ptr(&vkUiBatches, batchIdx)
-	}
-	assert(batch != nil)
-	when ODIN_DEBUG {
-		_, found := font.glyphMap['?']
-		assert(found)
-	}
-	batch.color = color
-	batch.descriptor = font.texture.descriptor
-	for r in str {
-		if r == '\n' {
-			penX = posX
-			penY += f32(font.common.lineHeight) * scale
-			continue
-		}
-		if r == ' ' || r == '\t' {
-			penX += f32(font.common.base) * scale
-			continue
-		}
-		glyph, glyphFound := font.glyphMap[rune(r)]
-		if !glyphFound do glyph = font.glyphMap['?'] or_continue
 
-		left := penX + f32(glyph.xoffset) * scale
-		right := left + f32(glyph.width) * scale
-		top := penY + f32(glyph.yoffset) * scale
-		bottom := top + f32(glyph.height) * scale
-		assert(font.common.scaleW != 0)
-		assert(font.common.scaleH != 0)
-		uvLeft := f32(glyph.x) / f32(font.common.scaleW)
-		uvTop := f32(glyph.y + glyph.height) / f32(font.common.scaleH)
-		uvBottom := f32(glyph.y) / f32(font.common.scaleH)
-		uvRight := f32(glyph.x + glyph.width) / f32(font.common.scaleW)
-
-		assert(left < right)
-		assert(top < bottom)
-		small_array.append(
-			&batch.vertices,
-			TextVertex{{left, bottom}, {uvLeft, uvTop}},
-			TextVertex{{right, bottom}, {uvRight, uvTop}},
-			TextVertex{{right, top}, {uvRight, uvBottom}},
-			TextVertex{{left, bottom}, {uvLeft, uvTop}},
-			TextVertex{{right, top}, {uvRight, uvBottom}},
-			TextVertex{{left, top}, {uvLeft, uvBottom}},
-		)
-		penX += f32(glyph.xadvance) * scale
-		if prevId >= 0 {
-			keringAmount: i32 = 0
-			for kering in font.kernings {
-				if kering.first == prevId && kering.second == glyph.id {
-					keringAmount = kering.amount
-				}
-			}
-			penX += f32(keringAmount) * scale
-		}
-		prevId = glyph.id
-	}
-	assert(small_array.len(batch.vertices) > 0)
-
-}
-ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
+render :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 	if small_array.len(vkUiBatches) == 0 do return
 	vk.CmdSetViewport(
 		cb,
@@ -423,13 +254,13 @@ ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 	)
 	vk.CmdBindPipeline(cb, .GRAPHICS, uiP.graphicsPipeline)
 	offset := vk.DeviceSize(0)
-	vkUIVertexBuffer := vkUIVertexBuffers[vkh.vkFrameIndex].buffer
-	vkUIVertexAlloc := vkUIVertexBuffers[vkh.vkFrameIndex].alloc
+	vkUIVertexBuffer := vkUIVertexBuffers[vkh.frameIndex].buffer
+	vkUIVertexAlloc := vkUIVertexBuffers[vkh.frameIndex].alloc
 
 	vk.CmdBindVertexBuffers(cb, 0, 1, &vkUIVertexBuffer, &offset)
 	// Map once
 	ptr: rawptr
-	vkh.chk(vma.map_memory(vkh.vkAllocator, vkUIVertexAlloc, &ptr))
+	vkh.chk(vma.map_memory(vkh.allocator, vkUIVertexAlloc, &ptr))
 	basePtr := (^TextVertex)(ptr)
 	runningOffset: u32 = 0
 	for &batch in small_array.slice(&vkUiBatches) {
@@ -443,7 +274,7 @@ ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 		basePtr = mem.ptr_offset(basePtr, int(count))
 		runningOffset += count
 	}
-	vma.unmap_memory(vkh.vkAllocator, vkUIVertexAlloc)
+	vma.unmap_memory(vkh.allocator, vkUIVertexAlloc)
 	for &batch, idx in small_array.slice(&vkUiBatches) {
 		assert(batch.vertexCount > 0)
 		// if batch.vertexCount == 0 do continue
@@ -471,7 +302,7 @@ ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 		push := UIPushConstants {
 			ortho   = ortho,
 			color   = batch.color,
-			pxRange = 2.0,
+			pxRange = 1,
 			mode    = batch.mode,
 		}
 		vk.CmdPushConstants(
@@ -487,23 +318,21 @@ ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 		vk.CmdDraw(cb, batch.vertexCount, 1, batch.firstVertex, 0)
 	}
 }
-vk_ui_destroy :: proc(textP: vkh.PipelineData) {
+destroy :: proc(textP: vkh.PipelineData) {
 	for vkUIVertexBuffer in vkUIVertexBuffers {
 		if vkUIVertexBuffer.buffer != {} {
-			vma.destroy_buffer(vkh.vkAllocator, vkUIVertexBuffer.buffer, vkUIVertexBuffer.alloc)
+			vma.destroy_buffer(vkh.allocator, vkUIVertexBuffer.buffer, vkUIVertexBuffer.alloc)
 		}
 	}
 
 	if textP.graphicsPipeline != {} {
-		vk.DestroyPipeline(vkh.vkDevice, textP.graphicsPipeline, nil)
+		vk.DestroyPipeline(vkh.device, textP.graphicsPipeline, nil)
 	}
 	if textP.layout != {} {
-		vk.DestroyPipelineLayout(vkh.vkDevice, textP.layout, nil)
+		vk.DestroyPipelineLayout(vkh.device, textP.layout, nil)
 	}
 	if textP.descriptorSetLayout != {} {
-		vk.DestroyDescriptorSetLayout(vkh.vkDevice, textP.descriptorSetLayout, nil)
+		vk.DestroyDescriptorSetLayout(vkh.device, textP.descriptorSetLayout, nil)
 	}
-	if vkDummyTexture.descriptor.imageView != {} do vk.DestroyImageView(vkh.vkDevice, vkDummyTexture.descriptor.imageView, nil)
-	if vkDummyTexture.descriptor.sampler != {} do vk.DestroySampler(vkh.vkDevice, vkDummyTexture.descriptor.sampler, nil)
-	if vkDummyTexture.image != {} do vma.destroy_image(vkh.vkAllocator, vkDummyTexture.image, vkDummyTexture.allocation)
+	vkh.gpu_texture_destroy(vkDummyTexture)
 }

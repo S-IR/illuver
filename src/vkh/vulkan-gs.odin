@@ -16,39 +16,39 @@ GPUTexture :: struct {
 	id:         u32,
 }
 
-vkInstance: vk.Instance
-vkPhysicalDevice: vk.PhysicalDevice
+instance: vk.Instance
+physicalDevice: vk.PhysicalDevice
 
-vkGraphicsQueueFamilyIndex: u32 = 0
-vkQueue: vk.Queue
+graphicsQueueFamilyIndex: u32 = 0
+queue: vk.Queue
 
-vkDevice: vk.Device
+device: vk.Device
 
-vkAllocator: vma.Allocator
+allocator: vma.Allocator
 
-vkSurface: vk.SurfaceKHR
-vkSwapchain: vk.SwapchainKHR
-vkSwapchainImageFormat: vk.Format = .B8G8R8A8_SRGB
-vkSwapchainColorSpace: vk.ColorSpaceKHR = .SRGB_NONLINEAR
+surface: vk.SurfaceKHR
+swapchain: vk.SwapchainKHR
+swapchainImageFormat: vk.Format = .B8G8R8A8_SRGB
+swapchainColorSpace: vk.ColorSpaceKHR = .SRGB_NONLINEAR
 
-vkSwapchainImages: [dynamic]vk.Image = nil
-vkSwpachainImageViews: [dynamic]vk.ImageView = nil
+swapchainImages: [dynamic]vk.Image = nil
+swpachainImageViews: [dynamic]vk.ImageView = nil
 
-vkImageCount: u32
-vkDepthFormat: vk.Format = .UNDEFINED
+imageCount: u32
+depthFormat: vk.Format = .UNDEFINED
 
-vkDepthImage: vk.Image
+depthImage: vk.Image
 vmaDepthStencilAlloc: vma.Allocation
-vkDepthImageView: vk.ImageView
+depthImageView: vk.ImageView
 
-vkFences := [MAX_FRAMES_IN_FLIGHT]vk.Fence{}
-vkPresentSemaphores := [MAX_FRAMES_IN_FLIGHT]vk.Semaphore{}
-vkRenderSemaphores: []vk.Semaphore = nil
+fences := [MAX_FRAMES_IN_FLIGHT]vk.Fence{}
+presentSemaphores := [MAX_FRAMES_IN_FLIGHT]vk.Semaphore{}
+renderSemaphores: []vk.Semaphore = nil
 
-vkCommandPool: vk.CommandPool
-vkDrawCommandBuffers := [MAX_FRAMES_IN_FLIGHT]vk.CommandBuffer{}
-vkUpdateSwapchain: bool
-vkFrameIndex: u32 = 0
+commandPool: vk.CommandPool
+drawCommandBuffers := [MAX_FRAMES_IN_FLIGHT]vk.CommandBuffer{}
+updateSwapchain: bool
+frameIndex: u32 = 0
 imageIndex: u32 = 0
 
 MAX_FRAMES_IN_FLIGHT: u32 : 2
@@ -109,24 +109,24 @@ vulkan_init :: proc() {
 
 		}
 
-		chk(vk.CreateInstance(&instanceCI, nil, &vkInstance))
-		vk.load_proc_addresses_instance(vkInstance)
+		chk(vk.CreateInstance(&instanceCI, nil, &instance))
+		vk.load_proc_addresses_instance(instance)
 
 	}
-	ensure(vkInstance != nil)
+	ensure(instance != nil)
 
 	{
 		tracy.Zone()
 
 		deviceCount: u32 = 0
-		chk(vk.EnumeratePhysicalDevices(vkInstance, &deviceCount, nil))
+		chk(vk.EnumeratePhysicalDevices(instance, &deviceCount, nil))
 		devices := make([]vk.PhysicalDevice, deviceCount, context.temp_allocator)
 		if deviceCount == 0 {
 			fmt.eprintln("cannot find any device supporting our given Vulkan requirements")
 			os.exit(1)
 		}
 
-		chk(vk.EnumeratePhysicalDevices(vkInstance, &deviceCount, raw_data(devices)))
+		chk(vk.EnumeratePhysicalDevices(instance, &deviceCount, raw_data(devices)))
 
 		deviceProperties := vk.PhysicalDeviceProperties2 {
 			sType = .PHYSICAL_DEVICE_PROPERTIES_2,
@@ -165,43 +165,39 @@ vulkan_init :: proc() {
 			fmt.eprintln("cannot find any device supporting our given Vulkan requirements")
 			os.exit(1)
 		}
-		vkPhysicalDevice = bestDevice
+		physicalDevice = bestDevice
 		// vk.GetPhysicalDeviceProperties2(vkPhysicalDevice, &deviceProperties)
 	}
-	ensure(vkPhysicalDevice != {})
+	ensure(physicalDevice != {})
 	// fmt.printfln("Selected device: %s", deviceProperties.properties.deviceName)
 
 	{
 		tracy.Zone()
 
 		queueFamilyCount: u32 = 0
-		vk.GetPhysicalDeviceQueueFamilyProperties(vkPhysicalDevice, &queueFamilyCount, nil)
+		vk.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nil)
 		queueFamilies := make([]vk.QueueFamilyProperties, queueFamilyCount, context.temp_allocator)
 
 		vk.GetPhysicalDeviceQueueFamilyProperties(
-			vkPhysicalDevice,
+			physicalDevice,
 			&queueFamilyCount,
 			raw_data(queueFamilies),
 		)
 		for queueFamily, i in queueFamilies {
 			if (.GRAPHICS in queueFamily.queueFlags) {
-				vkGraphicsQueueFamilyIndex = u32(i)
+				graphicsQueueFamilyIndex = u32(i)
 				break
 			}
 		}
 
 		ensure(
-			sdl.Vulkan_GetPresentationSupport(
-				vkInstance,
-				vkPhysicalDevice,
-				vkGraphicsQueueFamilyIndex,
-			),
+			sdl.Vulkan_GetPresentationSupport(instance, physicalDevice, graphicsQueueFamilyIndex),
 		)
 		// Logical device
 		qfpriorities: f32 = 1.0
 		queueCI := vk.DeviceQueueCreateInfo {
 			sType            = .DEVICE_QUEUE_CREATE_INFO,
-			queueFamilyIndex = vkGraphicsQueueFamilyIndex,
+			queueFamilyIndex = graphicsQueueFamilyIndex,
 			queueCount       = 1,
 			pQueuePriorities = &qfpriorities,
 		}
@@ -238,11 +234,11 @@ vulkan_init :: proc() {
 			ppEnabledExtensionNames = raw_data(deviceExtensions[:]),
 			pEnabledFeatures        = &enabledVk10Features,
 		}
-		chk(vk.CreateDevice(vkPhysicalDevice, &deviceCI, nil, &vkDevice))
-		vk.GetDeviceQueue(vkDevice, vkGraphicsQueueFamilyIndex, 0, &vkQueue)
+		chk(vk.CreateDevice(physicalDevice, &deviceCI, nil, &device))
+		vk.GetDeviceQueue(device, graphicsQueueFamilyIndex, 0, &queue)
 	}
-	ensure(vkQueue != {})
-	ensure(vkDevice != {})
+	ensure(queue != {})
+	ensure(device != {})
 
 	{
 		tracy.Zone()
@@ -253,37 +249,33 @@ vulkan_init :: proc() {
 			vma.create_allocator(
 				{
 					flags = {.Buffer_Device_Address},
-					physical_device = vkPhysicalDevice,
-					device = vkDevice,
-					instance = vkInstance,
+					physical_device = physicalDevice,
+					device = device,
+					instance = instance,
 					vulkan_functions = &vmaVulkanFunctions,
 				},
-				&vkAllocator,
+				&allocator,
 			),
 		)
 
 	}
-	ensure(vkAllocator != {})
+	ensure(allocator != {})
 
 	{
 		tracy.Zone()
 
-		ensure(sdl.Vulkan_CreateSurface(gs.window, vkInstance, nil, &vkSurface))
+		ensure(sdl.Vulkan_CreateSurface(gs.window, instance, nil, &surface))
 		surfaceCaps: vk.SurfaceCapabilitiesKHR
-		chk(
-			vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysicalDevice, vkSurface, &surfaceCaps),
-		)
+		chk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps))
 
 
 		formatCount: u32 = 0
-		chk(
-			vk.GetPhysicalDeviceSurfaceFormatsKHR(vkPhysicalDevice, vkSurface, &formatCount, nil),
-		)
+		chk(vk.GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nil))
 		surfaceFormats := make([]vk.SurfaceFormatKHR, formatCount, context.temp_allocator)
 		chk(
 			vk.GetPhysicalDeviceSurfaceFormatsKHR(
-				vkPhysicalDevice,
-				vkSurface,
+				physicalDevice,
+				surface,
 				&formatCount,
 				raw_data(surfaceFormats),
 			),
@@ -305,18 +297,18 @@ vulkan_init :: proc() {
 			}
 		}
 
-		vkSwapchainImageFormat = preferredFormat.format
-		vkSwapchainColorSpace = preferredFormat.colorSpace
-		ensure(vkSwapchainImageFormat != .UNDEFINED)
+		swapchainImageFormat = preferredFormat.format
+		swapchainColorSpace = preferredFormat.colorSpace
+		ensure(swapchainImageFormat != .UNDEFINED)
 
 		chk(
 			vk.CreateSwapchainKHR(
-				vkDevice,
+				device,
 				&{
 					sType = .SWAPCHAIN_CREATE_INFO_KHR,
-					surface = vkSurface,
+					surface = surface,
 					minImageCount = surfaceCaps.minImageCount,
-					imageFormat = vkSwapchainImageFormat,
+					imageFormat = swapchainImageFormat,
 					imageColorSpace = preferredFormat.colorSpace,
 					imageExtent = vk_resolve_extent(surfaceCaps),
 					imageArrayLayers = 1,
@@ -326,36 +318,36 @@ vulkan_init :: proc() {
 					presentMode = .FIFO,
 				},
 				nil,
-				&vkSwapchain,
+				&swapchain,
 			),
 		)
-		vk.GetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkImageCount, nil)
-		vkSwapchainImages = make([dynamic]vk.Image, vkImageCount)
-		vkSwpachainImageViews = make([dynamic]vk.ImageView, vkImageCount)
-		vk.GetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkImageCount, raw_data(vkSwapchainImages))
+		vk.GetSwapchainImagesKHR(device, swapchain, &imageCount, nil)
+		swapchainImages = make([dynamic]vk.Image, imageCount)
+		swpachainImageViews = make([dynamic]vk.ImageView, imageCount)
+		vk.GetSwapchainImagesKHR(device, swapchain, &imageCount, raw_data(swapchainImages))
 
-		for i in 0 ..< vkImageCount {
+		for i in 0 ..< imageCount {
 			chk(
 				vk.CreateImageView(
-					vkDevice,
+					device,
 					&{
 						sType = .IMAGE_VIEW_CREATE_INFO,
-						image = vkSwapchainImages[i],
+						image = swapchainImages[i],
 						viewType = .D2,
-						format = vkSwapchainImageFormat,
+						format = swapchainImageFormat,
 						subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 					},
 					nil,
-					&vkSwpachainImageViews[i],
+					&swpachainImageViews[i],
 				),
 			)
 		}
 	}
-	ensure(vkSurface != {})
-	ensure(vkSwapchain != {})
-	ensure(vkImageCount > 0)
-	for i in vkSwapchainImages do ensure(i != {})
-	for i in vkSwpachainImageViews do ensure(i != {})
+	ensure(surface != {})
+	ensure(swapchain != {})
+	ensure(imageCount > 0)
+	for i in swapchainImages do ensure(i != {})
+	for i in swpachainImageViews do ensure(i != {})
 
 
 	{
@@ -366,27 +358,27 @@ vulkan_init :: proc() {
 		for format in depthFormatList {
 			formatProperties := [?]vk.FormatProperties2{{sType = .FORMAT_PROPERTIES_2}}
 			vk.GetPhysicalDeviceFormatProperties2(
-				vkPhysicalDevice,
+				physicalDevice,
 				format,
 				raw_data(formatProperties[:]),
 			)
 
 			if .DEPTH_STENCIL_ATTACHMENT in
 			   formatProperties[0].formatProperties.optimalTilingFeatures {
-				vkDepthFormat = format
+				depthFormat = format
 				break
 			}
 		}
 
-		ensure(vkDepthFormat != .UNDEFINED)
+		ensure(depthFormat != .UNDEFINED)
 
 		chk(
 			vma.create_image(
-				vkAllocator,
+				allocator,
 				{
 					sType = .IMAGE_CREATE_INFO,
 					imageType = .D2,
-					format = vkDepthFormat,
+					format = depthFormat,
 					extent = {
 						width = u32(gs.screenWidth),
 						height = u32(gs.screenHeight),
@@ -400,7 +392,7 @@ vulkan_init :: proc() {
 					initialLayout = .UNDEFINED,
 				},
 				{flags = {.Dedicated_Memory}, usage = .Auto},
-				&vkDepthImage,
+				&depthImage,
 				&vmaDepthStencilAlloc,
 				nil,
 			),
@@ -408,26 +400,26 @@ vulkan_init :: proc() {
 
 		chk(
 			vk.CreateImageView(
-				vkDevice,
+				device,
 				&{
 					sType = .IMAGE_VIEW_CREATE_INFO,
-					image = vkDepthImage,
+					image = depthImage,
 					viewType = .D2,
-					format = vkDepthFormat,
+					format = depthFormat,
 					subresourceRange = {
-						aspectMask = vk.ImageAspectFlags{.DEPTH} if vkDepthFormat == .D32_SFLOAT else vk.ImageAspectFlags{.DEPTH, .STENCIL},
+						aspectMask = vk.ImageAspectFlags{.DEPTH} if depthFormat == .D32_SFLOAT else vk.ImageAspectFlags{.DEPTH, .STENCIL},
 						levelCount = 1,
 						layerCount = 1,
 					},
 				},
 				nil,
-				&vkDepthImageView,
+				&depthImageView,
 			),
 		)
 
 	}
-	ensure(vkDepthImageView != {})
-	ensure(vkDepthImage != {})
+	ensure(depthImageView != {})
+	ensure(depthImage != {})
 
 
 	// for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
@@ -476,55 +468,55 @@ vulkan_init :: proc() {
 		for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
 			chk(
 				vk.CreateFence(
-					vkDevice,
+					device,
 					&{sType = .FENCE_CREATE_INFO, flags = {.SIGNALED}},
 					nil,
-					&vkFences[i],
+					&fences[i],
 				),
 			)
-			chk(vk.CreateSemaphore(vkDevice, &semaphoreCI, nil, &vkPresentSemaphores[i]))
+			chk(vk.CreateSemaphore(device, &semaphoreCI, nil, &presentSemaphores[i]))
 
 		}
-		vkRenderSemaphores = make([]vk.Semaphore, len(vkSwapchainImages))
-		for &s in vkRenderSemaphores {
-			chk(vk.CreateSemaphore(vkDevice, &semaphoreCI, nil, &s))
+		renderSemaphores = make([]vk.Semaphore, len(swapchainImages))
+		for &s in renderSemaphores {
+			chk(vk.CreateSemaphore(device, &semaphoreCI, nil, &s))
 		}
 	}
-	assert(len(vkRenderSemaphores) != 0)
-	for i in vkRenderSemaphores do ensure(i != {})
-	for i in vkRenderSemaphores do ensure(i != {})
-	for i in vkFences do ensure(i != {})
+	assert(len(renderSemaphores) != 0)
+	for i in renderSemaphores do ensure(i != {})
+	for i in renderSemaphores do ensure(i != {})
+	for i in fences do ensure(i != {})
 
 	{
 		tracy.Zone()
 
 		chk(
 			vk.CreateCommandPool(
-				vkDevice,
+				device,
 				&{
 					sType = .COMMAND_POOL_CREATE_INFO,
 					flags = {.RESET_COMMAND_BUFFER},
-					queueFamilyIndex = vkGraphicsQueueFamilyIndex,
+					queueFamilyIndex = graphicsQueueFamilyIndex,
 				},
 				nil,
-				&vkCommandPool,
+				&commandPool,
 			),
 		)
 
 		chk(
 			vk.AllocateCommandBuffers(
-				vkDevice,
+				device,
 				&{
 					sType = .COMMAND_BUFFER_ALLOCATE_INFO,
-					commandPool = vkCommandPool,
+					commandPool = commandPool,
 					commandBufferCount = MAX_FRAMES_IN_FLIGHT,
 				},
-				raw_data(vkDrawCommandBuffers[:]),
+				raw_data(drawCommandBuffers[:]),
 			),
 		)
 	}
-	ensure(vkCommandPool != {})
-	for i in vkDrawCommandBuffers do ensure(i != {})
+	ensure(commandPool != {})
+	for i in drawCommandBuffers do ensure(i != {})
 
 	{
 		tracy.Zone()
@@ -533,7 +525,7 @@ vulkan_init :: proc() {
 
 			chk(
 				vma.create_buffer(
-					vkAllocator,
+					allocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
 						size = size_of(CameraUBO),
@@ -571,36 +563,36 @@ vk_run_deferred_buffer_releases :: proc(frameIdx: u32) {
 
 	for release in releases {
 		if release.alloc != {} {
-			vma.destroy_buffer(vkAllocator, release.buffer, release.alloc)
+			vma.destroy_buffer(allocator, release.buffer, release.alloc)
 		}
 	}
 
 	small_array.clear(&deferredBufferReleases[frameIdx])
 }
 vulkan_cleanup :: proc() {
-	vk.DeviceWaitIdle(vkDevice)
+	vk.DeviceWaitIdle(device)
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT do vk_run_deferred_buffer_releases(i)
 
 
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		if vkFences[i] != {} do vk.DestroyFence(vkDevice, vkFences[i], nil)
-		if vkPresentSemaphores[i] != {} do vk.DestroySemaphore(vkDevice, vkPresentSemaphores[i], nil)
-		if cameraBuffers[i].alloc != {} do vma.destroy_buffer(vkAllocator, cameraBuffers[i].buffer, cameraBuffers[i].alloc)
+		if fences[i] != {} do vk.DestroyFence(device, fences[i], nil)
+		if presentSemaphores[i] != {} do vk.DestroySemaphore(device, presentSemaphores[i], nil)
+		if cameraBuffers[i].alloc != {} do vma.destroy_buffer(allocator, cameraBuffers[i].buffer, cameraBuffers[i].alloc)
 	}
 
-	for s in vkRenderSemaphores {
-		if s != {} do vk.DestroySemaphore(vkDevice, s, nil)
+	for s in renderSemaphores {
+		if s != {} do vk.DestroySemaphore(device, s, nil)
 	}
-	delete(vkRenderSemaphores)
-	if vkDepthImageView != {} do vk.DestroyImageView(vkDevice, vkDepthImageView, nil)
+	delete(renderSemaphores)
+	if depthImageView != {} do vk.DestroyImageView(device, depthImageView, nil)
 
-	if vkDepthImage != {} do vma.destroy_image(vkAllocator, vkDepthImage, vmaDepthStencilAlloc)
+	if depthImage != {} do vma.destroy_image(allocator, depthImage, vmaDepthStencilAlloc)
 
 
-	for view in vkSwpachainImageViews {
-		if view != {} do vk.DestroyImageView(vkDevice, view, nil)
+	for view in swpachainImageViews {
+		if view != {} do vk.DestroyImageView(device, view, nil)
 	}
-	delete(vkSwpachainImageViews)
+	delete(swpachainImageViews)
 
 	// for t in textures {
 	// 	if t.view != {} do vk.DestroyImageView(vkDevice, t.view, nil)
@@ -612,40 +604,40 @@ vulkan_cleanup :: proc() {
 	// }
 
 
-	if vkSwapchain != {} do vk.DestroySwapchainKHR(vkDevice, vkSwapchain, nil)
-	delete(vkSwapchainImages)
+	if swapchain != {} do vk.DestroySwapchainKHR(device, swapchain, nil)
+	delete(swapchainImages)
 
-	if vkCommandPool != {} do vk.DestroyCommandPool(vkDevice, vkCommandPool, nil)
-
-
-	if vkAllocator != nil do vma.destroy_allocator(vkAllocator)
+	if commandPool != {} do vk.DestroyCommandPool(device, commandPool, nil)
 
 
-	if vkSurface != {} do vk.DestroySurfaceKHR(vkInstance, vkSurface, nil)
+	if allocator != nil do vma.destroy_allocator(allocator)
 
-	if vkDevice != {} do vk.DestroyDevice(vkDevice, nil)
 
-	if vkInstance != {} do vk.DestroyInstance(vkInstance, nil)
+	if surface != {} do vk.DestroySurfaceKHR(instance, surface, nil)
+
+	if device != {} do vk.DestroyDevice(device, nil)
+
+	if instance != {} do vk.DestroyInstance(instance, nil)
 
 
 }
 
 vulkan_update_swapchain :: proc() {
-	if vkUpdateSwapchain == false do return
-	defer vkUpdateSwapchain = false
-	chk(vk.DeviceWaitIdle(vkDevice))
+	if updateSwapchain == false do return
+	defer updateSwapchain = false
+	chk(vk.DeviceWaitIdle(device))
 
 	surfaceCaps: vk.SurfaceCapabilitiesKHR
-	chk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysicalDevice, vkSurface, &surfaceCaps))
+	chk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps))
 
-	oldSwapchain := vkSwapchain
+	oldSwapchain := swapchain
 
 	swapchainCI := vk.SwapchainCreateInfoKHR {
 		sType = .SWAPCHAIN_CREATE_INFO_KHR,
-		surface = vkSurface,
+		surface = surface,
 		minImageCount = surfaceCaps.minImageCount,
-		imageFormat = vkSwapchainImageFormat,
-		imageColorSpace = vkSwapchainColorSpace,
+		imageFormat = swapchainImageFormat,
+		imageColorSpace = swapchainColorSpace,
 		imageExtent = {width = gs.screenWidth, height = gs.screenHeight},
 		imageArrayLayers = 1,
 		imageUsage = {.COLOR_ATTACHMENT},
@@ -655,48 +647,41 @@ vulkan_update_swapchain :: proc() {
 		oldSwapchain = oldSwapchain,
 	}
 
-	chk(vk.CreateSwapchainKHR(vkDevice, &swapchainCI, nil, &vkSwapchain))
+	chk(vk.CreateSwapchainKHR(device, &swapchainCI, nil, &swapchain))
 
-	for view in vkSwpachainImageViews {
-		vk.DestroyImageView(vkDevice, view, nil)
+	for view in swpachainImageViews {
+		vk.DestroyImageView(device, view, nil)
 	}
 
-	chk(vk.GetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkImageCount, nil))
-	clear_dynamic_array(&vkSwapchainImages)
-	resize(&vkSwapchainImages, vkImageCount)
+	chk(vk.GetSwapchainImagesKHR(device, swapchain, &imageCount, nil))
+	clear_dynamic_array(&swapchainImages)
+	resize(&swapchainImages, imageCount)
 
-	clear_dynamic_array(&vkSwpachainImageViews)
-	resize(&vkSwpachainImageViews, vkImageCount)
-	chk(
-		vk.GetSwapchainImagesKHR(
-			vkDevice,
-			vkSwapchain,
-			&vkImageCount,
-			raw_data(vkSwapchainImages),
-		),
-	)
+	clear_dynamic_array(&swpachainImageViews)
+	resize(&swpachainImageViews, imageCount)
+	chk(vk.GetSwapchainImagesKHR(device, swapchain, &imageCount, raw_data(swapchainImages)))
 
-	for i in 0 ..< vkImageCount {
+	for i in 0 ..< imageCount {
 		viewCI := vk.ImageViewCreateInfo {
 			sType = .IMAGE_VIEW_CREATE_INFO,
-			image = vkSwapchainImages[i],
+			image = swapchainImages[i],
 			viewType = .D2,
-			format = vkSwapchainImageFormat,
+			format = swapchainImageFormat,
 			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 		}
 
-		chk(vk.CreateImageView(vkDevice, &viewCI, nil, &vkSwpachainImageViews[i]))
+		chk(vk.CreateImageView(device, &viewCI, nil, &swpachainImageViews[i]))
 	}
 
-	vk.DestroySwapchainKHR(vkDevice, oldSwapchain, nil)
+	vk.DestroySwapchainKHR(device, oldSwapchain, nil)
 
-	vk.DestroyImageView(vkDevice, vkDepthImageView, nil)
-	vma.destroy_image(vkAllocator, vkDepthImage, vmaDepthStencilAlloc)
+	vk.DestroyImageView(device, depthImageView, nil)
+	vma.destroy_image(allocator, depthImage, vmaDepthStencilAlloc)
 
 	depthImageCI := vk.ImageCreateInfo {
 		sType = .IMAGE_CREATE_INFO,
 		imageType = .D2,
-		format = vkDepthFormat,
+		format = depthFormat,
 		extent = {width = gs.screenWidth, height = gs.screenHeight, depth = 1},
 		mipLevels = 1,
 		arrayLayers = 1,
@@ -712,10 +697,10 @@ vulkan_update_swapchain :: proc() {
 
 	chk(
 		vma.create_image(
-			vkAllocator,
+			allocator,
 			depthImageCI,
 			allocCI,
-			&vkDepthImage,
+			&depthImage,
 			&vmaDepthStencilAlloc,
 			nil,
 		),
@@ -723,18 +708,18 @@ vulkan_update_swapchain :: proc() {
 
 	depthViewCI := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
-		image = vkDepthImage,
+		image = depthImage,
 		viewType = .D2,
-		format = vkDepthFormat,
+		format = depthFormat,
 		subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
 	}
 
-	chk(vk.CreateImageView(vkDevice, &depthViewCI, nil, &vkDepthImageView))
+	chk(vk.CreateImageView(device, &depthViewCI, nil, &depthImageView))
 }
 vk_chk_swapchain :: proc(r: vk.Result) {
 	if r != .SUCCESS {
 		if r == .ERROR_OUT_OF_DATE_KHR {
-			vkUpdateSwapchain = true
+			updateSwapchain = true
 		} else {
 			chk(r)
 		}

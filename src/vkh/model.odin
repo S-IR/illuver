@@ -231,7 +231,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 			posBufferSize := vk.DeviceSize(vertexCount * size_of([3]f32))
 			chk(
 				vma.create_buffer(
-					vkAllocator,
+					allocator,
 					{sType = .BUFFER_CREATE_INFO, size = posBufferSize, usage = {.VERTEX_BUFFER}},
 					{
 						flags = {
@@ -246,15 +246,15 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 				),
 			)
 			posPtr: rawptr
-			vma.map_memory(vkAllocator, renderObj.primitive.posAlloc, &posPtr)
+			vma.map_memory(allocator, renderObj.primitive.posAlloc, &posPtr)
 			floatsReadPos := c.accessor_unpack_floats(posAcc, cast([^]f32)posPtr, vertexCount * 3)
 			assert(floatsReadPos == vertexCount * 3)
-			vma.unmap_memory(vkAllocator, renderObj.primitive.posAlloc)
+			vma.unmap_memory(allocator, renderObj.primitive.posAlloc)
 
 			normBufferSize := vk.DeviceSize(vertexCount * 3 * size_of(f32))
 			chk(
 				vma.create_buffer(
-					vkAllocator,
+					allocator,
 					{sType = .BUFFER_CREATE_INFO, size = normBufferSize, usage = {.VERTEX_BUFFER}},
 					{
 						flags = {
@@ -269,7 +269,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 				),
 			)
 			normPtr: rawptr
-			vma.map_memory(vkAllocator, renderObj.primitive.normAlloc, &normPtr)
+			vma.map_memory(allocator, renderObj.primitive.normAlloc, &normPtr)
 
 			floatsReadNorm := c.accessor_unpack_floats(
 				normAcc,
@@ -277,12 +277,12 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 				vertexCount * 3,
 			)
 			assert(floatsReadNorm == vertexCount * 3)
-			vma.unmap_memory(vkAllocator, renderObj.primitive.normAlloc)
+			vma.unmap_memory(allocator, renderObj.primitive.normAlloc)
 
 			uvBufferSize := vk.DeviceSize(vertexCount * 2 * size_of(f32))
 			chk(
 				vma.create_buffer(
-					vkAllocator,
+					allocator,
 					{sType = .BUFFER_CREATE_INFO, size = uvBufferSize, usage = {.VERTEX_BUFFER}},
 					{
 						flags = {
@@ -298,10 +298,10 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 			)
 
 			uvPtr: rawptr
-			vma.map_memory(vkAllocator, renderObj.primitive.uvAlloc, &uvPtr)
+			vma.map_memory(allocator, renderObj.primitive.uvAlloc, &uvPtr)
 			floatsReadUv := c.accessor_unpack_floats(uvAcc, cast([^]f32)uvPtr, vertexCount * 2)
 			assert(floatsReadUv == vertexCount * 2)
-			vma.unmap_memory(vkAllocator, renderObj.primitive.uvAlloc)
+			vma.unmap_memory(allocator, renderObj.primitive.uvAlloc)
 
 			if primitive.indices != nil {
 				assert(primitive.indices.count < uint(max(GLTF_INDICES_TYPE_USED)))
@@ -310,7 +310,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 				indexBufferSize := size_of(GLTF_INDICES_TYPE_USED) * renderObj.primitive.indexCount
 				chk(
 					vma.create_buffer(
-						vkAllocator,
+						allocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(indexBufferSize),
@@ -329,8 +329,8 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 					),
 				)
 				indexPtr: ^u8
-				vma.map_memory(vkAllocator, renderObj.primitive.indexAlloc, (^rawptr)(&indexPtr))
-				defer vma.unmap_memory(vkAllocator, renderObj.primitive.indexAlloc)
+				vma.map_memory(allocator, renderObj.primitive.indexAlloc, (^rawptr)(&indexPtr))
+				defer vma.unmap_memory(allocator, renderObj.primitive.indexAlloc)
 
 
 				indicesRead := c.accessor_unpack_indices(
@@ -345,7 +345,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 
 			}
 
-			renderObj.material.baseColorTexture = load_gltf_image(primInfoImage, cb)
+			renderObj.material.baseColorTexture = load_image(primInfoImage, cb)
 
 			renderObj.material.baseColorFactor = metallicRoughness.base_color_factor
 			#partial switch primitive.type {
@@ -366,32 +366,33 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 model_destroy :: proc(m: Model) {
 	for obj in m.renderObjs {
 		if obj.primitive.posBuffer != {} {
-			vma.destroy_buffer(vkAllocator, obj.primitive.posBuffer, obj.primitive.posAlloc)
+			vma.destroy_buffer(allocator, obj.primitive.posBuffer, obj.primitive.posAlloc)
 		}
 		if obj.primitive.normBuffer != {} {
-			vma.destroy_buffer(vkAllocator, obj.primitive.normBuffer, obj.primitive.normAlloc)
+			vma.destroy_buffer(allocator, obj.primitive.normBuffer, obj.primitive.normAlloc)
 		}
 		if obj.primitive.uvBuffer != {} {
-			vma.destroy_buffer(vkAllocator, obj.primitive.uvBuffer, obj.primitive.uvAlloc)
+			vma.destroy_buffer(allocator, obj.primitive.uvBuffer, obj.primitive.uvAlloc)
 		}
 
 		if obj.primitive.indexBuffer != {} {
-			vma.destroy_buffer(vkAllocator, obj.primitive.indexBuffer, obj.primitive.indexAlloc)
+			vma.destroy_buffer(allocator, obj.primitive.indexBuffer, obj.primitive.indexAlloc)
 		}
 		view := obj.material.baseColorTexture.descriptor.imageView
-		if view != {} do vk.DestroyImageView(vkDevice, view, nil)
+		if view != {} do vk.DestroyImageView(device, view, nil)
 
 		sampler := obj.material.baseColorTexture.descriptor.sampler
-		if sampler != {} do vk.DestroySampler(vkDevice, sampler, nil)
+		if sampler != {} do vk.DestroySampler(device, sampler, nil)
 
 
 		image := obj.material.baseColorTexture.image
-		if image != {} do vma.destroy_image(vkAllocator, image, obj.material.baseColorTexture.allocation)
+		if image != {} do vma.destroy_image(allocator, image, obj.material.baseColorTexture.allocation)
 
 	}
 	delete(m.renderObjs)
 
 }
+@(private)
 cgltf_filter_type_to_vk_filter :: proc(t: c.filter_type) -> (vkT: vk.Filter) {
 	switch t {
 	case .linear_mipmap_linear:
@@ -407,6 +408,7 @@ cgltf_filter_type_to_vk_filter :: proc(t: c.filter_type) -> (vkT: vk.Filter) {
 	}
 	return vkT
 }
+@(private)
 primitive_image_assert :: proc(pi: ImageLoaderInputs) {
 	when ODIN_DEBUG {
 		assert(pi.data != nil)

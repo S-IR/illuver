@@ -4,10 +4,10 @@ import vk "vendor:vulkan"
 loader_command_buffer_create :: proc() -> (cb: vk.CommandBuffer, fence: vk.Fence) {
 	chk(
 		vk.AllocateCommandBuffers(
-			vkDevice,
+			device,
 			&vk.CommandBufferAllocateInfo {
 				sType = .COMMAND_BUFFER_ALLOCATE_INFO,
-				commandPool = vkCommandPool,
+				commandPool = commandPool,
 				commandBufferCount = 1,
 			},
 			&cb,
@@ -23,32 +23,17 @@ loader_command_buffer_create :: proc() -> (cb: vk.CommandBuffer, fence: vk.Fence
 		),
 	)
 
-	chk(vk.CreateFence(vkDevice, &{sType = .FENCE_CREATE_INFO}, nil, &fence))
+	chk(vk.CreateFence(device, &{sType = .FENCE_CREATE_INFO}, nil, &fence))
 	return cb, fence
 }
 loader_command_buffer_wait_and_destroy :: proc(cb: vk.CommandBuffer, fence: vk.Fence) {
-
-	chk(vk.EndCommandBuffer(cb))
 	tempCbArr := [?]vk.CommandBuffer{cb}
 
-	chk(
-		vk.QueueSubmit(
-			vkQueue,
-			1,
-			&vk.SubmitInfo {
-				sType = .SUBMIT_INFO,
-				commandBufferCount = len(tempCbArr),
-				pCommandBuffers = raw_data(tempCbArr[:]),
-			},
-			fence,
-		),
-	)
-	tempFenceArr := [?]vk.Fence{fence}
-	chk(
-		vk.WaitForFences(vkDevice, len(tempFenceArr), raw_data(tempFenceArr[:]), true, max(u64)),
-	)
 
-	vk.FreeCommandBuffers(vkDevice, vkCommandPool, len(tempCbArr), raw_data(tempCbArr[:]))
-	vk.DestroyFence(vkDevice, fence, nil)
+	tempFenceArr := [?]vk.Fence{fence}
+	chk(vk.WaitForFences(device, len(tempFenceArr), raw_data(tempFenceArr[:]), true, max(u64)))
+
+	vk.FreeCommandBuffers(device, commandPool, len(tempCbArr), raw_data(tempCbArr[:]))
+	vk.DestroyFence(device, fence, nil)
 
 }
