@@ -71,6 +71,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 
 		chunk := &Chunks[state.xIdx][state.zIdx]
 		jobTypeStr, _ := fmt.enum_value_to_string(job.type)
+		sync.mutex_lock(&chunk.mutex)
 
 		switch v in job.type {
 		case EnergyTickJob:
@@ -136,7 +137,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 			}
 			chunk_create_gpu_geometry(chunk, state)
 		}
-
+		sync.mutex_unlock(&chunk.mutex)
 		sync.wait_group_done(&chunkWorkersWG)
 	}
 }
@@ -225,13 +226,10 @@ chunk_update_add_thread :: proc(xIdx, zIdx: int) {
 		pos  = Chunks[xIdx][zIdx].pos,
 		type = UpdateJob{},
 	}
-	sync.mutex_lock(&chunkJobMutex)
-	append(&chunkJobQueue, job)
-	sync.mutex_unlock(&chunkJobMutex)
-	sync.wait_group_add(&chunkWorkersWG, 1)
-	sync.sema_post(&chunkJobSema)
+	chunk_send_job(job)
 
 }
+
 chunk_point_edit_add_thread :: proc(xIdx, zIdx: int, indexX, indexY, indexZ: i32, newType: u16) {
 	job := ChunkJob {
 		xIdx = xIdx,
@@ -239,11 +237,8 @@ chunk_point_edit_add_thread :: proc(xIdx, zIdx: int, indexX, indexY, indexZ: i32
 		pos = Chunks[xIdx][zIdx].pos,
 		type = EditUpdateJob{x = indexX, y = indexY, z = indexZ, newPointType = newType},
 	}
-	sync.mutex_lock(&chunkJobMutex)
-	append(&chunkJobQueue, job)
-	sync.mutex_unlock(&chunkJobMutex)
-	sync.wait_group_add(&chunkWorkersWG, 1)
-	sync.sema_post(&chunkJobSema)
+	chunk_send_job(job)
+
 }
 chunk_energy_tick_add_thread :: proc(xIdx, zIdx: int, energyTickType: bit_set[EnergyType]) {
 	job := ChunkJob {
@@ -253,10 +248,13 @@ chunk_energy_tick_add_thread :: proc(xIdx, zIdx: int, energyTickType: bit_set[En
 		type = EnergyTickJob{energyTickType = energyTickType},
 	}
 
+	chunk_send_job(job)
+
+}
+chunk_send_job :: proc(job: ChunkJob) {
 	sync.mutex_lock(&chunkJobMutex)
 	append(&chunkJobQueue, job)
 	sync.mutex_unlock(&chunkJobMutex)
 	sync.wait_group_add(&chunkWorkersWG, 1)
 	sync.sema_post(&chunkJobSema)
-
 }

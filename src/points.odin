@@ -10,7 +10,7 @@ import "core:time"
 import "gs"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
-
+import "vkh"
 Point_r: struct {
 	pipeline: ^sdl.GPUGraphicsPipeline,
 } = {}
@@ -118,13 +118,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	}
 }
 BottomFacedIndices := [?]u16{0, 1, 2, 0, 2, 3}
-PipelineData :: struct {
-	descriptorSetLayout: vk.DescriptorSetLayout,
-	layout:              vk.PipelineLayout,
-	graphicsPipeline:    vk.Pipeline,
-}
 
-point_pipeline_init :: proc() -> (p: PipelineData) {
+
+point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 	// --- Descriptor layout (matches SDL shader usage) ---
 	descLayoutBindings := [?]vk.DescriptorSetLayoutBinding {
@@ -144,9 +140,9 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 		},
 	}
 
-	gs.vk_chk(
+	vkh.chk(
 		vk.CreateDescriptorSetLayout(
-			gs.vkDevice,
+			vkh.vkDevice,
 			&vk.DescriptorSetLayoutCreateInfo {
 				sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 				flags = {.PUSH_DESCRIPTOR_KHR},
@@ -162,15 +158,15 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 	VERT_SPV :: #load("../build/shader-binaries/point.vertex.spv")
 	FRAG_SPV :: #load("../build/shader-binaries/point.fragment.spv")
 
-	vertModule := gs.create_shader_module(gs.vkDevice, VERT_SPV)
-	fragModule := gs.create_shader_module(gs.vkDevice, FRAG_SPV)
+	vertModule := vkh.create_shader_module(vkh.vkDevice, VERT_SPV)
+	fragModule := vkh.create_shader_module(vkh.vkDevice, FRAG_SPV)
 
-	defer vk.DestroyShaderModule(gs.vkDevice, vertModule, nil)
-	defer vk.DestroyShaderModule(gs.vkDevice, fragModule, nil)
+	defer vk.DestroyShaderModule(vkh.vkDevice, vertModule, nil)
+	defer vk.DestroyShaderModule(vkh.vkDevice, fragModule, nil)
 	// --- Pipeline layout ---
-	gs.vk_chk(
+	vkh.chk(
 		vk.CreatePipelineLayout(
-			gs.vkDevice,
+			vkh.vkDevice,
 			&vk.PipelineLayoutCreateInfo {
 				sType = .PIPELINE_LAYOUT_CREATE_INFO,
 				setLayoutCount = 1,
@@ -208,9 +204,9 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 	}
 
 	// --- Graphics pipeline ---
-	gs.vk_chk(
+	vkh.chk(
 		vk.CreateGraphicsPipelines(
-			gs.vkDevice,
+			vkh.vkDevice,
 			{},
 			1,
 			&vk.GraphicsPipelineCreateInfo {
@@ -218,8 +214,8 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 				pNext = &vk.PipelineRenderingCreateInfo {
 					sType = .PIPELINE_RENDERING_CREATE_INFO,
 					colorAttachmentCount = 1,
-					pColorAttachmentFormats = &gs.vkSwapchainImageFormat,
-					depthAttachmentFormat = gs.vkDepthFormat,
+					pColorAttachmentFormats = &vkh.vkSwapchainImageFormat,
+					depthAttachmentFormat = vkh.vkDepthFormat,
 				},
 				stageCount = len(pipelineStages),
 				pStages = raw_data(pipelineStages[:]),
@@ -279,12 +275,12 @@ point_pipeline_init :: proc() -> (p: PipelineData) {
 }
 
 
-pipeline_data_delete :: proc(p: PipelineData) {
-	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(gs.vkDevice, p.descriptorSetLayout, nil)
+pipeline_data_delete :: proc(p: vkh.PipelineData) {
+	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkh.vkDevice, p.descriptorSetLayout, nil)
 
-	if p.layout != {} do vk.DestroyPipelineLayout(gs.vkDevice, p.layout, nil)
+	if p.layout != {} do vk.DestroyPipelineLayout(vkh.vkDevice, p.layout, nil)
 
-	if p.graphicsPipeline != {} do vk.DestroyPipeline(gs.vkDevice, p.graphicsPipeline, nil)
+	if p.graphicsPipeline != {} do vk.DestroyPipeline(vkh.vkDevice, p.graphicsPipeline, nil)
 
 }
 

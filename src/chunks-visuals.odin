@@ -19,6 +19,8 @@ import "core:sync"
 import "core:thread"
 import "gs"
 import vk "vendor:vulkan"
+import "vkh"
+
 int3 :: [3]i32
 int2 :: [2]i32
 
@@ -44,19 +46,21 @@ CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 
 NUM_WORKER_THREADS := 4
 Chunk :: struct {
-	points:       [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
-	heightMap:    [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]i32,
-	buffers:      struct {
-		pointsBuffer: [gs.MAX_FRAMES_IN_FLIGHT]gs.VkBufferPoolElem,
-		indices:      [gs.MAX_FRAMES_IN_FLIGHT]gs.VkBufferPoolElem,
-		colors:       [gs.MAX_FRAMES_IN_FLIGHT]gs.VkBufferPoolElem,
+	points:        [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
+	heightMap:     [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]i32,
+	buffers:       struct {
+		pointsBuffer: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
+		indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
+		colors:       [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
 	},
-	pos:          int2,
-	totalPoints:  u32,
-	totalIndices: u32,
-	arena:        virtual.Arena,
-	alloc:        mem.Allocator,
-	dirty:        bool,
+	pos:           int2,
+	pendingUpload: [vkh.MAX_FRAMES_IN_FLIGHT]b32,
+	mutex:         sync.Mutex,
+	totalPoints:   u32,
+	totalIndices:  u32,
+	arena:         virtual.Arena,
+	alloc:         mem.Allocator,
+	dirty:         bool,
 }
 
 
@@ -180,14 +184,14 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		state: ChunkWorkerState,
 	) {
 		chunk := &Chunks[xIdx][zIdx]
-		for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
+		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 			if chunk.buffers.pointsBuffer[i].alloc != {} do continue
 			assert(chunk.buffers.indices[i].buffer == {})
 			assert(chunk.buffers.colors[i].buffer == {})
 
-			gs.vk_chk(
+			vkh.chk(
 				vma.create_buffer(
-					gs.vkAllocator,
+					vkh.vkAllocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
 						size = vk.DeviceSize(MAX_POINTS * size_of([3]f32)),
@@ -199,9 +203,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					nil,
 				),
 			)
-			gs.vk_chk(
+			vkh.chk(
 				vma.create_buffer(
-					gs.vkAllocator,
+					vkh.vkAllocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
 						size = vk.DeviceSize(MAX_INDICES * size_of(INDEX_TYPE_USED_IN_CHUNKS)),
@@ -214,9 +218,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				),
 			)
 
-			gs.vk_chk(
+			vkh.chk(
 				vma.create_buffer(
-					gs.vkAllocator,
+					vkh.vkAllocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
 						size = vk.DeviceSize(MAX_COLORS * size_of([4]f32)),
@@ -385,16 +389,16 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk.totalPoints = u32(staticVisiblePointsLen)
 		chunk.totalIndices = u32(staticIndicesLen)
 
-		for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
+		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 			assert(chunk.buffers.pointsBuffer[i].alloc != {})
 			assert(chunk.buffers.indices[i].alloc != {})
 			assert(chunk.buffers.colors[i].alloc != {})
 
 
 			vertBufferPtr: rawptr
-			gs.vk_chk(
+			vkh.chk(
 				vma.map_memory(
-					gs.vkAllocator,
+					vkh.vkAllocator,
 					chunk.buffers.pointsBuffer[i].alloc,
 					&vertBufferPtr,
 				),
@@ -404,33 +408,31 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				raw_data(staticVisiblePoints[0:staticVisiblePointsLen]),
 				staticVisiblePointsLen * size_of(staticVisiblePoints[0]),
 			)
-			vma.unmap_memory(gs.vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
+			vma.unmap_memory(vkh.vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
 
 			index := chunk.buffers.indices[i]
 
 
 			indexBufferPtr: rawptr
-			gs.vk_chk(
-				vma.map_memory(gs.vkAllocator, chunk.buffers.indices[i].alloc, &indexBufferPtr),
+			vkh.chk(
+				vma.map_memory(vkh.vkAllocator, chunk.buffers.indices[i].alloc, &indexBufferPtr),
 			)
 			mem.copy(
 				indexBufferPtr,
 				raw_data(staticIndices[0:staticIndicesLen]),
 				staticIndicesLen * size_of(staticIndices[0]),
 			)
-			vma.unmap_memory(gs.vkAllocator, chunk.buffers.indices[i].alloc)
+			vma.unmap_memory(vkh.vkAllocator, chunk.buffers.indices[i].alloc)
 
 
 			colorBuferPtr: rawptr
-			gs.vk_chk(
-				vma.map_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc, &colorBuferPtr),
-			)
+			vkh.chk(vma.map_memory(vkh.vkAllocator, chunk.buffers.colors[i].alloc, &colorBuferPtr))
 			mem.copy(
 				colorBuferPtr,
 				raw_data(staticColors[0:staticColorsLen]),
 				staticColorsLen * size_of(staticColors[0]),
 			)
-			vma.unmap_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc)
+			vma.unmap_memory(vkh.vkAllocator, chunk.buffers.colors[i].alloc)
 		}
 
 
@@ -442,14 +444,14 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk := &Chunks[state.xIdx][state.zIdx]
 		{
 			tracy.Zone()
-			for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
+			for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 				if chunk.buffers.pointsBuffer[i].buffer != {} do continue
 				assert(chunk.buffers.indices[i].buffer == {})
 				assert(chunk.buffers.colors[i].buffer == {})
 
-				gs.vk_chk(
+				vkh.chk(
 					vma.create_buffer(
-						gs.vkAllocator,
+						vkh.vkAllocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(MAX_POINTS * size_of([3]f32)),
@@ -461,9 +463,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						nil,
 					),
 				)
-				gs.vk_chk(
+				vkh.chk(
 					vma.create_buffer(
-						gs.vkAllocator,
+						vkh.vkAllocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(MAX_INDICES * size_of(INDEX_TYPE_USED_IN_CHUNKS)),
@@ -476,9 +478,9 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					),
 				)
 
-				gs.vk_chk(
+				vkh.chk(
 					vma.create_buffer(
-						gs.vkAllocator,
+						vkh.vkAllocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(MAX_COLORS * size_of([4]f32)),
@@ -932,61 +934,135 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk.totalPoints = u32(staticVisiblePointsLen)
 		chunk.totalIndices = u32(staticIndicesLen)
 
-		{
-			tracy.Zone()
-			for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
-				assert(chunk.buffers.pointsBuffer[i].alloc != {})
-				assert(chunk.buffers.indices[i].alloc != {})
-				assert(chunk.buffers.colors[i].alloc != {})
+		safeIndices: [vkh.MAX_FRAMES_IN_FLIGHT]bool
+		pendingFences := [vkh.MAX_FRAMES_IN_FLIGHT]vk.Fence{}
+		pendingIndices := [vkh.MAX_FRAMES_IN_FLIGHT]u32{}
+		pendingLen := 0
 
-
-				vertBufferPtr: rawptr
-				gs.vk_chk(
-					vma.map_memory(
-						gs.vkAllocator,
-						chunk.buffers.pointsBuffer[i].alloc,
-						&vertBufferPtr,
-					),
-				)
-				mem.copy(
-					vertBufferPtr,
-					raw_data(state.visiblePoints[0:staticVisiblePointsLen]),
-					int(staticVisiblePointsLen) * size_of(state.visiblePoints[0]),
-				)
-				vma.unmap_memory(gs.vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
-
-
-				indexBufferPtr: rawptr
-				gs.vk_chk(
-					vma.map_memory(
-						gs.vkAllocator,
-						chunk.buffers.indices[i].alloc,
-						&indexBufferPtr,
-					),
-				)
-				mem.copy(
-					indexBufferPtr,
-					raw_data(state.indices[0:staticIndicesLen]),
-					staticIndicesLen * size_of(state.indices[0]),
-				)
-				vma.unmap_memory(gs.vkAllocator, chunk.buffers.indices[i].alloc)
-
-
-				colorBufferPtr: rawptr
-				gs.vk_chk(
-					vma.map_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc, &colorBufferPtr),
-				)
-				mem.copy(
-					colorBufferPtr,
-					raw_data(state.colors[0:staticColorsLen]),
-					staticColorsLen * size_of(state.colors[0]),
-				)
-				vma.unmap_memory(gs.vkAllocator, chunk.buffers.colors[i].alloc)
+		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
+			// A fence is "safe" if it's signaled OR if it hasn't been submitted yet
+			// (which we know because the frame index hasn't wrapped past it)
+			if vk.GetFenceStatus(vkh.vkDevice, vkh.vkFences[i]) == .SUCCESS {
+				safeIndices[i] = true
+			} else {
+				pendingFences[pendingLen] = vkh.vkFences[i]
+				pendingIndices[pendingLen] = i
+				pendingLen += 1
 			}
-
-
 		}
-	}}
+
+		// Upload to all safe buffers immediately
+		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
+			if safeIndices[i] {
+				upload_to_buffer(
+					chunk,
+					state,
+					i,
+					staticVisiblePointsLen,
+					staticIndicesLen,
+					staticColorsLen,
+				)
+			}
+		}
+
+		if pendingLen > 0 {
+			vk.WaitForFences(
+				vkh.vkDevice,
+				u32(pendingLen),
+				raw_data(pendingFences[0:pendingLen]),
+				true,
+				max(u64),
+			)
+			for i in 0 ..< pendingLen {
+				upload_to_buffer(
+					chunk,
+					state,
+					pendingIndices[i],
+					staticVisiblePointsLen,
+					staticIndicesLen,
+					staticColorsLen,
+				)
+			}
+		}
+		upload_to_buffer :: proc(
+			chunk: ^Chunk,
+			state: ^ChunkWorkerState,
+			i: u32,
+			staticVisiblePointsLen: u32,
+			staticIndicesLen, staticColorsLen: int,
+		) {
+			assert(chunk.buffers.pointsBuffer[i].alloc != {})
+			assert(chunk.buffers.indices[i].alloc != {})
+			assert(chunk.buffers.colors[i].alloc != {})
+
+
+			vertBufferPtr: rawptr
+			vkh.chk(
+				vma.map_memory(
+					vkh.vkAllocator,
+					chunk.buffers.pointsBuffer[i].alloc,
+					&vertBufferPtr,
+				),
+			)
+			mem.copy(
+				vertBufferPtr,
+				raw_data(state.visiblePoints[0:staticVisiblePointsLen]),
+				int(staticVisiblePointsLen) * size_of(state.visiblePoints[0]),
+			)
+			vma.unmap_memory(vkh.vkAllocator, chunk.buffers.pointsBuffer[i].alloc)
+
+
+			indexBufferPtr: rawptr
+			vkh.chk(
+				vma.map_memory(vkh.vkAllocator, chunk.buffers.indices[i].alloc, &indexBufferPtr),
+			)
+			mem.copy(
+				indexBufferPtr,
+				raw_data(state.indices[0:staticIndicesLen]),
+				staticIndicesLen * size_of(state.indices[0]),
+			)
+			vma.unmap_memory(vkh.vkAllocator, chunk.buffers.indices[i].alloc)
+
+
+			colorBufferPtr: rawptr
+			vkh.chk(
+				vma.map_memory(vkh.vkAllocator, chunk.buffers.colors[i].alloc, &colorBufferPtr),
+			)
+			mem.copy(
+				colorBufferPtr,
+				raw_data(state.colors[0:staticColorsLen]),
+				staticColorsLen * size_of(state.colors[0]),
+			)
+			vma.unmap_memory(vkh.vkAllocator, chunk.buffers.colors[i].alloc)
+		}
+	}
+	// for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
+	// 	// A fence is "safe" if it's signaled OR if it hasn't been submitted yet
+	// 	// (which we know because the frame index hasn't wrapped past it)
+	// 	if vk.GetFenceStatus(vkh.vkDevice, vkh.vkFences[i]) == .SUCCESS {
+	// 		safeIndices[i] = true
+	// 	} else {
+	// 		append(&pendingFences, vkh.vkFences[i])
+	// 		append(&pendingIndices, i)
+	// 	}
+	// }
+
+
+	// {
+
+	// tracy.Zone()
+	// 	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
+
+	// 		if vk.GetFenceStatus(vkh.vkDevice, vkh.vkFences[i]) != .NOT_READY {
+	// 			vk.WaitForFences(vkh.vkDevice, 1, &vkh.vkFences[i], true, max(u64))
+	// 		}
+
+	// 		// vk.ResetFences(vkh.vkDevice, 1, &vkh.vkFences[i])
+
+
+	// }
+	// }
+}
 
 
 geometry_process_vertex :: proc "contextless" (
@@ -1091,7 +1167,7 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 
 chunks_draw :: proc(
 	cb: vk.CommandBuffer,
-	p: ^PipelineData,
+	p: ^vkh.PipelineData,
 	CameraUBO: vk.Buffer,
 	CameraUBOSize: vk.DeviceSize,
 	currCamera: ^camera.Camera,
@@ -1125,24 +1201,24 @@ chunks_draw :: proc(
 			if chunk.totalIndices == 0 do continue
 
 
-			assert(chunk.buffers.pointsBuffer[gs.vkFrameIndex].alloc != {})
-			vertexBuffer := chunk.buffers.pointsBuffer[gs.vkFrameIndex].buffer
+			assert(chunk.buffers.pointsBuffer[vkh.vkFrameIndex].alloc != {})
+			vertexBuffer := chunk.buffers.pointsBuffer[vkh.vkFrameIndex].buffer
 			vertexOffset := vk.DeviceSize(0)
 
 			vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
 			#assert(INDEX_TYPE_USED_IN_CHUNKS == u32)
 
-			vk.CmdBindIndexBuffer(cb, chunk.buffers.indices[gs.vkFrameIndex].buffer, 0, .UINT32)
+			vk.CmdBindIndexBuffer(cb, chunk.buffers.indices[vkh.vkFrameIndex].buffer, 0, .UINT32)
 
 
 			cameraInfo := vk.DescriptorBufferInfo {
-				buffer = gs.cameraBuffers[gs.vkFrameIndex].buffer,
+				buffer = vkh.cameraBuffers[vkh.vkFrameIndex].buffer,
 				offset = 0,
-				range  = gs.CameraUBOSize,
+				range  = vkh.CameraUBOSize,
 			}
 
 			colorInfo := vk.DescriptorBufferInfo {
-				buffer = chunk.buffers.colors[gs.vkFrameIndex].buffer,
+				buffer = chunk.buffers.colors[vkh.vkFrameIndex].buffer,
 				offset = 0,
 				range  = vk.DeviceSize(vk.WHOLE_SIZE),
 			}
@@ -1202,10 +1278,10 @@ chunks_destroy :: proc() {
 chunk_destroy :: proc(chunk: ^Chunk) {
 	assert(chunk != nil)
 
-	for i in 0 ..< gs.MAX_FRAMES_IN_FLIGHT {
+	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 		if chunk.buffers.pointsBuffer[i].alloc != {} {
 			vma.destroy_buffer(
-				gs.vkAllocator,
+				vkh.vkAllocator,
 				chunk.buffers.pointsBuffer[i].buffer,
 				chunk.buffers.pointsBuffer[i].alloc,
 			)
@@ -1213,7 +1289,7 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 		}
 		if chunk.buffers.indices[i].alloc != {} {
 			vma.destroy_buffer(
-				gs.vkAllocator,
+				vkh.vkAllocator,
 				chunk.buffers.indices[i].buffer,
 				chunk.buffers.indices[i].alloc,
 			)
@@ -1221,7 +1297,7 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 		}
 		if chunk.buffers.colors[i].alloc != {} {
 			vma.destroy_buffer(
-				gs.vkAllocator,
+				vkh.vkAllocator,
 				chunk.buffers.colors[i].buffer,
 				chunk.buffers.colors[i].alloc,
 			)

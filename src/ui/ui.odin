@@ -1,6 +1,8 @@
 package ui
 
-import "../modules/vma"
+import "../../modules/vma"
+import "../gs"
+import "../vkh"
 import "base:runtime"
 import "core:container/small_array"
 import "core:encoding/json"
@@ -8,13 +10,12 @@ import "core:fmt"
 import "core:log"
 import la "core:math/linalg"
 import "core:mem"
-import os "core:os/os2"
+import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import sdl "vendor:sdl3"
 import stbImage "vendor:stb/image"
 import vk "vendor:vulkan"
-
 Glyph :: struct {
 	id:               i32,
 	x, y:             i32,
@@ -44,7 +45,7 @@ BMFont :: struct {
 	chars:    []Glyph,
 	kernings: []Kerning,
 	glyphMap: map[rune]Glyph,
-	texture:  GPUTexture,
+	texture:  vkh.GPUTexture,
 }
 bmfont_json_load :: proc(
 	path: string,
@@ -65,10 +66,11 @@ bmfont_json_load :: proc(
 	assert(len(font.pages) > 0)
 	pngPath := font.pages[0]
 	dir := filepath.dir(path, context.temp_allocator)
-	pngFinalPath := filepath.join({dir, pngPath}, context.temp_allocator)
+	pngFinalPath, err := filepath.join({dir, pngPath}, context.temp_allocator)
+	ensure(err == nil)
 	pngFinalPathCString := strings.clone_to_cstring(pngFinalPath, context.temp_allocator)
 	assert(os.exists(pngFinalPath))
-	inputs: ImageLoaderInputs
+	inputs: vkh.ImageLoaderInputs
 	DESIRED_CHANNELS :: 4
 	inputs.data = stbImage.load(
 		pngFinalPathCString,
@@ -82,7 +84,7 @@ bmfont_json_load :: proc(
 	inputs.magFilter = .LINEAR
 	inputs.minFilter = .LINEAR
 	inputs.channels = DESIRED_CHANNELS
-	font.texture = load_gltf_image(inputs, cb)
+	font.texture = vkh.load_gltf_image(inputs, cb)
 	font.glyphMap = make(map[rune]Glyph, len(font.chars), alloc)
 	for &g in font.chars {
 		font.glyphMap[rune(g.id)] = g
@@ -92,11 +94,11 @@ bmfont_json_load :: proc(
 bmfont_destroy :: proc(f: BMFont) {
 	delete(f.glyphMap)
 	view := f.texture.descriptor.imageView
-	if view != {} do vk.DestroyImageView(vkDevice, view, nil)
+	if view != {} do vk.DestroyImageView(vkh.vkDevice, view, nil)
 	sampler := f.texture.descriptor.sampler
-	if sampler != {} do vk.DestroySampler(vkDevice, sampler, nil)
+	if sampler != {} do vk.DestroySampler(vkh.vkDevice, sampler, nil)
 	image := f.texture.image
-	if image != {} do vma.destroy_image(vkAllocator, image, f.texture.allocation)
+	if image != {} do vma.destroy_image(vkh.vkAllocator, image, f.texture.allocation)
 }
 TextVertex :: struct {
 	pos: [2]f32,
@@ -126,29 +128,29 @@ UIBatch :: struct {
 MAX_TEXT_FONTS :: 5
 VK_UI_DUMMY_TEXTURE_ID: u32 : 0
 vkUiBatches: small_array.Small_Array(MAX_UI_BATCHES, UIBatch)
-vkDummyTexture: GPUTexture
+vkDummyTexture: vkh.GPUTexture
 ui_create_dummy_texture :: proc(cb: vk.CommandBuffer) {
 	// 1x1 white RGBA
 	data := [4]u8{255, 255, 255, 255}
-	inputs: ImageLoaderInputs
+	inputs: vkh.ImageLoaderInputs
 	inputs.data = raw_data(data[:])
 	inputs.width = 1
 	inputs.height = 1
 	inputs.channels = 4
 	inputs.magFilter = .NEAREST
 	inputs.minFilter = .NEAREST
-	vkDummyTexture = load_gltf_image(inputs, cb, false)
+	vkDummyTexture = vkh.load_gltf_image(inputs, cb, false)
 	vkDummyTexture.id = VK_UI_DUMMY_TEXTURE_ID
 }
 // vkTextFonts: small_array.Small_Array(MAX_TEXT_FONTS, UIBatch)
-vkUIVertexBuffers: [MAX_FRAMES_IN_FLIGHT]gs.VkBufferPoolElem
-vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: PipelineData) {
+vkUIVertexBuffers: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem
+vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 	ui_create_dummy_texture(cb)
 
 	for &bufferElem in vkUIVertexBuffers {
-		gs.vk_chk(
+		vkh.chk(
 			vma.create_buffer(
-				vkAllocator,
+				vkh.vkAllocator,
 				{
 					sType = .BUFFER_CREATE_INFO,
 					size = vk.DeviceSize(MAX_UI_BATCHES * MAX_UI_VERTS * size_of(TextVertex)),
@@ -171,9 +173,9 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: PipelineData) {
 			stageFlags = {.FRAGMENT},
 		},
 	}
-	gs.vk_chk(
+	vkh.chk(
 		vk.CreateDescriptorSetLayout(
-			vkDevice,
+			vkh.vkDevice,
 			&{
 				sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 				bindingCount = len(layoutBindings),
@@ -188,9 +190,9 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: PipelineData) {
 	pushRange := [?]vk.PushConstantRange {
 		{stageFlags = {.VERTEX, .FRAGMENT}, offset = 0, size = size_of(UIPushConstants)},
 	}
-	gs.vk_chk(
+	vkh.chk(
 		vk.CreatePipelineLayout(
-			vkDevice,
+			vkh.vkDevice,
 			&{
 				sType = .PIPELINE_LAYOUT_CREATE_INFO,
 				setLayoutCount = 1,
@@ -216,12 +218,14 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: PipelineData) {
 		},
 	}
 	dynamicStates := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
-	VERT_SPV :: #load("../build/shader-binaries/ui.vertex.spv")
-	FRAG_SPV :: #load("../build/shader-binaries/ui.fragment.spv")
-	vertModule := create_shader_module(vkDevice, VERT_SPV)
-	fragModule := create_shader_module(vkDevice, FRAG_SPV)
-	defer vk.DestroyShaderModule(vkDevice, vertModule, nil)
-	defer vk.DestroyShaderModule(vkDevice, fragModule, nil)
+
+	VERT_SPV :: #load("../../build/shader-binaries/ui.vertex.spv")
+	FRAG_SPV :: #load("../../build/shader-binaries/ui.fragment.spv")
+
+	vertModule := vkh.create_shader_module(vkh.vkDevice, VERT_SPV)
+	fragModule := vkh.create_shader_module(vkh.vkDevice, FRAG_SPV)
+	defer vk.DestroyShaderModule(vkh.vkDevice, vertModule, nil)
+	defer vk.DestroyShaderModule(vkh.vkDevice, fragModule, nil)
 	shaderStages := [?]vk.PipelineShaderStageCreateInfo {
 		{
 			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -242,8 +246,8 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: PipelineData) {
 		pNext               = &vk.PipelineRenderingCreateInfo {
 			sType = .PIPELINE_RENDERING_CREATE_INFO,
 			colorAttachmentCount = 1,
-			pColorAttachmentFormats = &swapchainImageFormat,
-			depthAttachmentFormat = depthFormat,
+			pColorAttachmentFormats = &vkh.vkSwapchainImageFormat,
+			depthAttachmentFormat = vkh.vkDepthFormat,
 		},
 		pStages             = raw_data(shaderStages[:]),
 		pVertexInputState   = &vk.PipelineVertexInputStateCreateInfo {
@@ -302,17 +306,18 @@ vk_ui_init :: proc(cb: vk.CommandBuffer) -> (p: PipelineData) {
 		layout              = p.layout,
 		subpass             = 0,
 	}
-	gs.vk_chk(vk.CreateGraphicsPipelines(vkDevice, 0, 1, &pipelineCi, nil, &p.graphicsPipeline))
+	vkh.chk(vk.CreateGraphicsPipelines(vkh.vkDevice, 0, 1, &pipelineCi, nil, &p.graphicsPipeline))
 	return p
 }
 ui_frame_reset :: proc() {
 	small_array.clear(&vkUiBatches)
 }
-ui_add_text :: proc(str: string, font: BMFont, fontSize: f32, posX, posY: f32, color: [4]f32) {
+add_text :: proc(str: string, font: BMFont, fontSize: f32, posX, posY: f32, color: [4]f32) {
 	assert(len(str) != 0)
 	assert(font.info.size != 0)
 	assert(font.glyphMap != nil)
 	assert(fontSize != 0)
+	assert(font.texture.id != VK_UI_DUMMY_TEXTURE_ID)
 	for c in color do assert(c <= 1 && c >= 0)
 	scale := fontSize / f32(font.info.size)
 	penX := posX
@@ -392,8 +397,10 @@ ui_add_text :: proc(str: string, font: BMFont, fontSize: f32, posX, posY: f32, c
 		}
 		prevId = glyph.id
 	}
+	assert(small_array.len(batch.vertices) > 0)
+
 }
-ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: PipelineData) {
+ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 	if small_array.len(vkUiBatches) == 0 do return
 	vk.CmdSetViewport(
 		cb,
@@ -416,13 +423,13 @@ ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: PipelineData) {
 	)
 	vk.CmdBindPipeline(cb, .GRAPHICS, uiP.graphicsPipeline)
 	offset := vk.DeviceSize(0)
-	vkUIVertexBuffer := vkUIVertexBuffers[frameIndex].buffer
-	vkUIVertexAlloc := vkUIVertexBuffers[frameIndex].alloc
+	vkUIVertexBuffer := vkUIVertexBuffers[vkh.vkFrameIndex].buffer
+	vkUIVertexAlloc := vkUIVertexBuffers[vkh.vkFrameIndex].alloc
 
 	vk.CmdBindVertexBuffers(cb, 0, 1, &vkUIVertexBuffer, &offset)
 	// Map once
 	ptr: rawptr
-	gs.vk_chk(vma.map_memory(vkAllocator, vkUIVertexAlloc, &ptr))
+	vkh.chk(vma.map_memory(vkh.vkAllocator, vkUIVertexAlloc, &ptr))
 	basePtr := (^TextVertex)(ptr)
 	runningOffset: u32 = 0
 	for &batch in small_array.slice(&vkUiBatches) {
@@ -433,13 +440,13 @@ ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: PipelineData) {
 		batch.firstVertex = runningOffset
 		batch.vertexCount = count
 		mem.copy(basePtr, raw_data(verts), int(count) * size_of(TextVertex))
-		basePtr = mem.ptr_offset(basePtr, int(count) * size_of(TextVertex))
+		basePtr = mem.ptr_offset(basePtr, int(count))
 		runningOffset += count
 	}
-	vma.unmap_memory(vkAllocator, vkUIVertexAlloc)
-	for &batch in small_array.slice(&vkUiBatches) {
+	vma.unmap_memory(vkh.vkAllocator, vkUIVertexAlloc)
+	for &batch, idx in small_array.slice(&vkUiBatches) {
 		assert(batch.vertexCount > 0)
-		if batch.vertexCount == 0 do continue
+		// if batch.vertexCount == 0 do continue
 		vk.CmdPushDescriptorSetKHR(
 			cb,
 			.GRAPHICS,
@@ -476,26 +483,27 @@ ui_render_ui :: proc(cb: vk.CommandBuffer, uiP: PipelineData) {
 			&push,
 		)
 		assert(batch.vertexCount > 0)
+
 		vk.CmdDraw(cb, batch.vertexCount, 1, batch.firstVertex, 0)
 	}
 }
-vk_ui_destroy :: proc(textP: PipelineData) {
+vk_ui_destroy :: proc(textP: vkh.PipelineData) {
 	for vkUIVertexBuffer in vkUIVertexBuffers {
 		if vkUIVertexBuffer.buffer != {} {
-			vma.destroy_buffer(vkAllocator, vkUIVertexBuffer.buffer, vkUIVertexBuffer.alloc)
+			vma.destroy_buffer(vkh.vkAllocator, vkUIVertexBuffer.buffer, vkUIVertexBuffer.alloc)
 		}
 	}
 
 	if textP.graphicsPipeline != {} {
-		vk.DestroyPipeline(vkDevice, textP.graphicsPipeline, nil)
+		vk.DestroyPipeline(vkh.vkDevice, textP.graphicsPipeline, nil)
 	}
 	if textP.layout != {} {
-		vk.DestroyPipelineLayout(vkDevice, textP.layout, nil)
+		vk.DestroyPipelineLayout(vkh.vkDevice, textP.layout, nil)
 	}
 	if textP.descriptorSetLayout != {} {
-		vk.DestroyDescriptorSetLayout(vkDevice, textP.descriptorSetLayout, nil)
+		vk.DestroyDescriptorSetLayout(vkh.vkDevice, textP.descriptorSetLayout, nil)
 	}
-	if vkDummyTexture.descriptor.imageView != {} do vk.DestroyImageView(vkDevice, vkDummyTexture.descriptor.imageView, nil)
-	if vkDummyTexture.descriptor.sampler != {} do vk.DestroySampler(vkDevice, vkDummyTexture.descriptor.sampler, nil)
-	if vkDummyTexture.image != {} do vma.destroy_image(vkAllocator, vkDummyTexture.image, vkDummyTexture.allocation)
+	if vkDummyTexture.descriptor.imageView != {} do vk.DestroyImageView(vkh.vkDevice, vkDummyTexture.descriptor.imageView, nil)
+	if vkDummyTexture.descriptor.sampler != {} do vk.DestroySampler(vkh.vkDevice, vkDummyTexture.descriptor.sampler, nil)
+	if vkDummyTexture.image != {} do vma.destroy_image(vkh.vkAllocator, vkDummyTexture.image, vkDummyTexture.allocation)
 }

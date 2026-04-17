@@ -1,15 +1,20 @@
-package gs
+package vkh
 import "../../modules/vma"
 import "core:container/small_array"
 import "core:fmt"
 import vk "vendor:vulkan"
 
-
 import "../../modules/tracy"
+import "../gs"
 import "core:log"
 import os "core:os"
 import sdl "vendor:sdl3"
-
+GPUTexture :: struct {
+	image:      vk.Image,
+	descriptor: vk.DescriptorImageInfo,
+	allocation: vma.Allocation,
+	id:         u32,
+}
 
 vkInstance: vk.Instance
 vkPhysicalDevice: vk.PhysicalDevice
@@ -56,15 +61,10 @@ VkBufferPoolElem :: struct {
 
 cameraBuffers := [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem{}
 
-DeferredBufferRelease :: struct {
-	buffer: vk.Buffer,
-	alloc:  vma.Allocation,
-}
-
 
 deferredBufferReleases: [MAX_FRAMES_IN_FLIGHT]small_array.Small_Array(
 	MAX_DEFERRED_RELEASES,
-	DeferredBufferRelease,
+	VkBufferPoolElem,
 )
 
 CameraUBO :: struct {
@@ -72,6 +72,11 @@ CameraUBO :: struct {
 	proj: matrix[4, 4]f32,
 }
 CameraUBOSize := vk.DeviceSize(size_of(CameraUBO))
+PipelineData :: struct {
+	descriptorSetLayout: vk.DescriptorSetLayout,
+	layout:              vk.PipelineLayout,
+	graphicsPipeline:    vk.Pipeline,
+}
 vulkan_init :: proc() {
 	tracy.Zone()
 	sdl.Vulkan_LoadLibrary(nil)
@@ -104,7 +109,7 @@ vulkan_init :: proc() {
 
 		}
 
-		vk_chk(vk.CreateInstance(&instanceCI, nil, &vkInstance))
+		chk(vk.CreateInstance(&instanceCI, nil, &vkInstance))
 		vk.load_proc_addresses_instance(vkInstance)
 
 	}
@@ -114,14 +119,14 @@ vulkan_init :: proc() {
 		tracy.Zone()
 
 		deviceCount: u32 = 0
-		vk_chk(vk.EnumeratePhysicalDevices(vkInstance, &deviceCount, nil))
+		chk(vk.EnumeratePhysicalDevices(vkInstance, &deviceCount, nil))
 		devices := make([]vk.PhysicalDevice, deviceCount, context.temp_allocator)
 		if deviceCount == 0 {
 			fmt.eprintln("cannot find any device supporting our given Vulkan requirements")
 			os.exit(1)
 		}
 
-		vk_chk(vk.EnumeratePhysicalDevices(vkInstance, &deviceCount, raw_data(devices)))
+		chk(vk.EnumeratePhysicalDevices(vkInstance, &deviceCount, raw_data(devices)))
 
 		deviceProperties := vk.PhysicalDeviceProperties2 {
 			sType = .PHYSICAL_DEVICE_PROPERTIES_2,
@@ -209,10 +214,11 @@ vulkan_init :: proc() {
 			bufferDeviceAddress                       = true,
 		}
 		enabledVk13Features := vk.PhysicalDeviceVulkan13Features {
-			sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-			pNext            = &enabledVk12Features,
-			synchronization2 = true,
-			dynamicRendering = true,
+			sType                          = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+			pNext                          = &enabledVk12Features,
+			shaderDemoteToHelperInvocation = true,
+			synchronization2               = true,
+			dynamicRendering               = true,
 		}
 		deviceExtensions := [?]cstring {
 			vk.KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -232,7 +238,7 @@ vulkan_init :: proc() {
 			ppEnabledExtensionNames = raw_data(deviceExtensions[:]),
 			pEnabledFeatures        = &enabledVk10Features,
 		}
-		vk_chk(vk.CreateDevice(vkPhysicalDevice, &deviceCI, nil, &vkDevice))
+		chk(vk.CreateDevice(vkPhysicalDevice, &deviceCI, nil, &vkDevice))
 		vk.GetDeviceQueue(vkDevice, vkGraphicsQueueFamilyIndex, 0, &vkQueue)
 	}
 	ensure(vkQueue != {})
@@ -243,7 +249,7 @@ vulkan_init :: proc() {
 
 		vmaVulkanFunctions := vma.create_vulkan_functions()
 
-		vk_chk(
+		chk(
 			vma.create_allocator(
 				{
 					flags = {.Buffer_Device_Address},
@@ -262,19 +268,19 @@ vulkan_init :: proc() {
 	{
 		tracy.Zone()
 
-		ensure(sdl.Vulkan_CreateSurface(window, vkInstance, nil, &vkSurface))
+		ensure(sdl.Vulkan_CreateSurface(gs.window, vkInstance, nil, &vkSurface))
 		surfaceCaps: vk.SurfaceCapabilitiesKHR
-		vk_chk(
+		chk(
 			vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysicalDevice, vkSurface, &surfaceCaps),
 		)
 
 
 		formatCount: u32 = 0
-		vk_chk(
+		chk(
 			vk.GetPhysicalDeviceSurfaceFormatsKHR(vkPhysicalDevice, vkSurface, &formatCount, nil),
 		)
 		surfaceFormats := make([]vk.SurfaceFormatKHR, formatCount, context.temp_allocator)
-		vk_chk(
+		chk(
 			vk.GetPhysicalDeviceSurfaceFormatsKHR(
 				vkPhysicalDevice,
 				vkSurface,
@@ -303,7 +309,7 @@ vulkan_init :: proc() {
 		vkSwapchainColorSpace = preferredFormat.colorSpace
 		ensure(vkSwapchainImageFormat != .UNDEFINED)
 
-		vk_chk(
+		chk(
 			vk.CreateSwapchainKHR(
 				vkDevice,
 				&{
@@ -329,7 +335,7 @@ vulkan_init :: proc() {
 		vk.GetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkImageCount, raw_data(vkSwapchainImages))
 
 		for i in 0 ..< vkImageCount {
-			vk_chk(
+			chk(
 				vk.CreateImageView(
 					vkDevice,
 					&{
@@ -374,14 +380,18 @@ vulkan_init :: proc() {
 
 		ensure(vkDepthFormat != .UNDEFINED)
 
-		vk_chk(
+		chk(
 			vma.create_image(
 				vkAllocator,
 				{
 					sType = .IMAGE_CREATE_INFO,
 					imageType = .D2,
 					format = vkDepthFormat,
-					extent = {width = u32(screenWidth), height = u32(screenHeight), depth = 1},
+					extent = {
+						width = u32(gs.screenWidth),
+						height = u32(gs.screenHeight),
+						depth = 1,
+					},
 					mipLevels = 1,
 					arrayLayers = 1,
 					samples = {._1},
@@ -396,7 +406,7 @@ vulkan_init :: proc() {
 			),
 		)
 
-		vk_chk(
+		chk(
 			vk.CreateImageView(
 				vkDevice,
 				&{
@@ -464,7 +474,7 @@ vulkan_init :: proc() {
 			sType = .SEMAPHORE_CREATE_INFO,
 		}
 		for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-			vk_chk(
+			chk(
 				vk.CreateFence(
 					vkDevice,
 					&{sType = .FENCE_CREATE_INFO, flags = {.SIGNALED}},
@@ -472,12 +482,12 @@ vulkan_init :: proc() {
 					&vkFences[i],
 				),
 			)
-			vk_chk(vk.CreateSemaphore(vkDevice, &semaphoreCI, nil, &vkPresentSemaphores[i]))
+			chk(vk.CreateSemaphore(vkDevice, &semaphoreCI, nil, &vkPresentSemaphores[i]))
 
 		}
 		vkRenderSemaphores = make([]vk.Semaphore, len(vkSwapchainImages))
 		for &s in vkRenderSemaphores {
-			vk_chk(vk.CreateSemaphore(vkDevice, &semaphoreCI, nil, &s))
+			chk(vk.CreateSemaphore(vkDevice, &semaphoreCI, nil, &s))
 		}
 	}
 	assert(len(vkRenderSemaphores) != 0)
@@ -488,7 +498,7 @@ vulkan_init :: proc() {
 	{
 		tracy.Zone()
 
-		vk_chk(
+		chk(
 			vk.CreateCommandPool(
 				vkDevice,
 				&{
@@ -501,7 +511,7 @@ vulkan_init :: proc() {
 			),
 		)
 
-		vk_chk(
+		chk(
 			vk.AllocateCommandBuffers(
 				vkDevice,
 				&{
@@ -521,7 +531,7 @@ vulkan_init :: proc() {
 
 		for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
 
-			vk_chk(
+			chk(
 				vma.create_buffer(
 					vkAllocator,
 					{
@@ -543,7 +553,7 @@ vulkan_init :: proc() {
 
 }
 
-vk_chk :: proc(r: vk.Result) {
+chk :: proc(r: vk.Result) {
 	if r != .SUCCESS {
 		when ODIN_DEBUG {
 			log.fatalf("[VULKAN RETURN ERROR]: %s", fmt.enum_value_to_string(r))
@@ -623,10 +633,10 @@ vulkan_cleanup :: proc() {
 vulkan_update_swapchain :: proc() {
 	if vkUpdateSwapchain == false do return
 	defer vkUpdateSwapchain = false
-	vk_chk(vk.DeviceWaitIdle(vkDevice))
+	chk(vk.DeviceWaitIdle(vkDevice))
 
 	surfaceCaps: vk.SurfaceCapabilitiesKHR
-	vk_chk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysicalDevice, vkSurface, &surfaceCaps))
+	chk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysicalDevice, vkSurface, &surfaceCaps))
 
 	oldSwapchain := vkSwapchain
 
@@ -636,7 +646,7 @@ vulkan_update_swapchain :: proc() {
 		minImageCount = surfaceCaps.minImageCount,
 		imageFormat = vkSwapchainImageFormat,
 		imageColorSpace = vkSwapchainColorSpace,
-		imageExtent = {width = screenWidth, height = screenHeight},
+		imageExtent = {width = gs.screenWidth, height = gs.screenHeight},
 		imageArrayLayers = 1,
 		imageUsage = {.COLOR_ATTACHMENT},
 		preTransform = {.IDENTITY},
@@ -645,19 +655,19 @@ vulkan_update_swapchain :: proc() {
 		oldSwapchain = oldSwapchain,
 	}
 
-	vk_chk(vk.CreateSwapchainKHR(vkDevice, &swapchainCI, nil, &vkSwapchain))
+	chk(vk.CreateSwapchainKHR(vkDevice, &swapchainCI, nil, &vkSwapchain))
 
 	for view in vkSwpachainImageViews {
 		vk.DestroyImageView(vkDevice, view, nil)
 	}
 
-	vk_chk(vk.GetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkImageCount, nil))
+	chk(vk.GetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkImageCount, nil))
 	clear_dynamic_array(&vkSwapchainImages)
 	resize(&vkSwapchainImages, vkImageCount)
 
 	clear_dynamic_array(&vkSwpachainImageViews)
 	resize(&vkSwpachainImageViews, vkImageCount)
-	vk_chk(
+	chk(
 		vk.GetSwapchainImagesKHR(
 			vkDevice,
 			vkSwapchain,
@@ -675,7 +685,7 @@ vulkan_update_swapchain :: proc() {
 			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 		}
 
-		vk_chk(vk.CreateImageView(vkDevice, &viewCI, nil, &vkSwpachainImageViews[i]))
+		chk(vk.CreateImageView(vkDevice, &viewCI, nil, &vkSwpachainImageViews[i]))
 	}
 
 	vk.DestroySwapchainKHR(vkDevice, oldSwapchain, nil)
@@ -687,7 +697,7 @@ vulkan_update_swapchain :: proc() {
 		sType = .IMAGE_CREATE_INFO,
 		imageType = .D2,
 		format = vkDepthFormat,
-		extent = {width = screenWidth, height = screenHeight, depth = 1},
+		extent = {width = gs.screenWidth, height = gs.screenHeight, depth = 1},
 		mipLevels = 1,
 		arrayLayers = 1,
 		samples = {._1},
@@ -700,7 +710,7 @@ vulkan_update_swapchain :: proc() {
 		usage = .Auto,
 	}
 
-	vk_chk(
+	chk(
 		vma.create_image(
 			vkAllocator,
 			depthImageCI,
@@ -719,14 +729,14 @@ vulkan_update_swapchain :: proc() {
 		subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
 	}
 
-	vk_chk(vk.CreateImageView(vkDevice, &depthViewCI, nil, &vkDepthImageView))
+	chk(vk.CreateImageView(vkDevice, &depthViewCI, nil, &vkDepthImageView))
 }
 vk_chk_swapchain :: proc(r: vk.Result) {
 	if r != .SUCCESS {
 		if r == .ERROR_OUT_OF_DATE_KHR {
 			vkUpdateSwapchain = true
 		} else {
-			vk_chk(r)
+			chk(r)
 		}
 	}
 }
@@ -743,17 +753,16 @@ create_shader_module :: proc(device: vk.Device, code: []byte) -> vk.ShaderModule
 
 	shader_module: vk.ShaderModule
 	res := vk.CreateShaderModule(device, &ci, nil, &shader_module)
-	vk_chk(res)
+	chk(res)
 
 	return shader_module
 }
 vk_resolve_extent :: proc(caps: vk.SurfaceCapabilitiesKHR) -> vk.Extent2D {
-	// 0xFFFFFFFF means the surface lets us pick; use the actual window size
 	if caps.currentExtent.width != max(u32) {
 		return caps.currentExtent
 	}
 	return {
-		width = clamp(screenWidth, caps.minImageExtent.width, caps.maxImageExtent.width),
-		height = clamp(screenHeight, caps.minImageExtent.height, caps.maxImageExtent.height),
+		width = clamp(gs.screenWidth, caps.minImageExtent.width, caps.maxImageExtent.width),
+		height = clamp(gs.screenHeight, caps.minImageExtent.height, caps.maxImageExtent.height),
 	}
 }
