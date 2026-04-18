@@ -140,6 +140,9 @@ inventory_reduce_amount_from_selected :: proc(inventory: ^Inventory) {
 	assert(inventory.spellbar.selected != 1)
 	assert(inventory.spellbar.spells[inventory.spellbar.selected] != {})
 	inventory.spellbar.spells[inventory.spellbar.selected].count -= 1
+	if inventory.spellbar.spells[inventory.spellbar.selected].count == 0 {
+		inventory.spellbar.spells[inventory.spellbar.selected] = {}
+	}
 
 }
 spellbar_render :: proc(inventory: ^Inventory) {

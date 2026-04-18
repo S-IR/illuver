@@ -206,3 +206,48 @@ is_chunk_in_camera_frustrum :: proc(pos: [2]i32, c: ^camera.Camera) -> bool {
 
 	return true
 }
+
+get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) -> u16 {
+	when ODIN_DEBUG {
+		worldPosRounded := linalg.round(worldGridPos)
+		assert(worldPosRounded == worldGridPos)
+	}
+
+	worldCoordXYZ := [3]i32{i32(worldGridPos.x), i32(worldGridPos.y), i32(worldGridPos.z)}
+
+	if worldCoordXYZ.y < MIN_Y || worldCoordXYZ.y > MAX_Y {
+		return 0
+	}
+
+	chunkCoordXZ := [2]i32 {
+		i32(math.floor(f32(worldCoordXYZ.x) / CHUNK_STRIDE)),
+		i32(math.floor(f32(worldCoordXYZ.z) / CHUNK_STRIDE)),
+	}
+
+	centerChunk := Chunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX]
+	centerChunkCoord := centerChunk.pos / CHUNK_STRIDE
+
+	arrayIndex := [2]i32 {
+		CHUNK_MIDDLE_X_INDEX + (chunkCoordXZ[0] - centerChunkCoord[0]),
+		CHUNK_MIDDLE_Z_INDEX + (chunkCoordXZ[1] - centerChunkCoord[1]),
+	}
+	// assert(!(arrayIndex.x < 0 || arrayIndex.x >= CHUNKS_PER_DIRECTION))
+	// assert(!(arrayIndex.y < 0 || arrayIndex.y >= CHUNKS_PER_DIRECTION))
+
+	if arrayIndex.x < 0 || arrayIndex.x >= CHUNKS_PER_DIRECTION do return 0
+	if arrayIndex.y < 0 || arrayIndex.y >= CHUNKS_PER_DIRECTION do return 0
+
+	chunk := Chunks[arrayIndex.x][arrayIndex.y]
+
+	localXYZ := [3]i32 {
+		worldCoordXYZ.x - chunk.pos.x,
+		worldCoordXYZ.y - MIN_Y,
+		worldCoordXYZ.z - chunk.pos.y,
+	}
+
+	assert(localXYZ.x >= 0 && localXYZ.x < VERTS_PER_X_DIR)
+	assert(localXYZ.y >= 0 && localXYZ.y < VERTS_PER_Y_DIR)
+	assert(localXYZ.z >= 0 && localXYZ.z < VERTS_PER_Z_DIR)
+
+	return chunk.points[index_into_point_arrays(localXYZ)]
+}

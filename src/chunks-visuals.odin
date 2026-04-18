@@ -1072,8 +1072,7 @@ geometry_process_vertex :: proc "contextless" (
 		wy := worldBase.y + offset.y
 		wz := worldBase.z + offset.z
 
-		jitter := calculate_jitter(wx, wy, wz, gs.seed)
-		vertexArr[vertexArrayLen^] = [3]f32{f32(wx), f32(wy), f32(wz)} + jitter
+		vertexArr[vertexArrayLen^] = point_real_world_position({f32(wx), f32(wy), f32(wz)})
 		mapper[idxVal] = vertexArrayLen^
 		curr := vertexArrayLen^
 		vertexArrayLen^ += 1
@@ -1138,8 +1137,8 @@ get_or_create_mapper_idx :: proc "contextless" (
 
 }
 point_real_world_position :: #force_inline proc "contextless" (worldXYZ: [3]f32) -> [3]f32 {
-	// return worldXYZ
-	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), gs.seed)
+	return worldXYZ
+	// return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), gs.seed)
 }
 calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -> [3]f32 {
 	h := u32(x) * 0x9e3779b9 + u32(y) * 0x85ebca6b + u32(z) * 0x27d4eb2d + u32(gs.seed)

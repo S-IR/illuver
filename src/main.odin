@@ -334,11 +334,23 @@ main :: proc() {
 		rayDir := compute_mouse_ray(mouseX, mouseY, gs.screenWidth, gs.screenHeight, view, proj)
 
 		inventorySelectedPoint := inventory_get_selected_point(&inventory)
+		hasItemToPlace := inventorySelectedPoint != .Air
+
+		// raycastPointHit: u16 = 0
+		// raycastPointPos: [3]f32
+		// raycastDidHappen: bool
 		raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(
 			currCamera.pos,
 			currCamera.front,
-			inventorySelectedPoint != .Air,
+			currCamera,
+			hasItemToPlace,
 		)
+		// fmt.print("camera pos ", currCamera.pos)
+		// fmt.print(" raycastPointPos", raycastPointPos)
+		// fmt.print(" 0 4 -2 point", get_point_at_world_pos({0, 4, -2}, currCamera))
+
+		fmt.println(" raycastPointHit", raycastPointHit)
+
 		raycastIf: if raycastDidHappen && leftClickIsHeldThisFrame {
 			changed, prev := chunk_set_point(raycastPointPos, PointType.Air)
 			if u16_to_point_type(prev) != .Air {
