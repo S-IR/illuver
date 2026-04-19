@@ -258,7 +258,6 @@ render :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 	vkUIVertexAlloc := vkUIVertexBuffers[vkh.frameIndex].alloc
 
 	vk.CmdBindVertexBuffers(cb, 0, 1, &vkUIVertexBuffer, &offset)
-	// Map once
 	ptr: rawptr
 	vkh.chk(vma.map_memory(vkh.allocator, vkUIVertexAlloc, &ptr))
 	basePtr := (^TextVertex)(ptr)
@@ -275,9 +274,8 @@ render :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 		runningOffset += count
 	}
 	vma.unmap_memory(vkh.allocator, vkUIVertexAlloc)
-	for &batch, idx in small_array.slice(&vkUiBatches) {
-		assert(batch.vertexCount > 0)
-		// if batch.vertexCount == 0 do continue
+
+	draw_batch :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData, batch: ^UIBatch) {
 		vk.CmdPushDescriptorSetKHR(
 			cb,
 			.GRAPHICS,
@@ -298,7 +296,6 @@ render :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 			0, 0, -1.0, 0,
 			0, 0, 0, 1,
 		}
-
 		push := UIPushConstants {
 			ortho   = ortho,
 			color   = batch.color,
@@ -313,9 +310,14 @@ render :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 			size_of(UIPushConstants),
 			&push,
 		)
-		assert(batch.vertexCount > 0)
-
 		vk.CmdDraw(cb, batch.vertexCount, 1, batch.firstVertex, 0)
+	}
+
+	for &batch in small_array.slice(&vkUiBatches) {
+		if batch.mode == .Solid do draw_batch(cb, uiP, &batch)
+	}
+	for &batch in small_array.slice(&vkUiBatches) {
+		if batch.mode == .Text || batch.mode == .Image do draw_batch(cb, uiP, &batch)
 	}
 }
 destroy :: proc(textP: vkh.PipelineData) {
@@ -335,4 +337,7 @@ destroy :: proc(textP: vkh.PipelineData) {
 		vk.DestroyDescriptorSetLayout(vkh.device, textP.descriptorSetLayout, nil)
 	}
 	vkh.gpu_texture_destroy(vkDummyTexture)
+}
+put_in_middle :: proc(widthOfChild, widthOfParent: f32) -> (posX: f32) {
+	return widthOfParent / 2 - widthOfChild / 2
 }

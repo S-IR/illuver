@@ -2,9 +2,9 @@ package gs
 import "core:os"
 import "core:time"
 import sdl "vendor:sdl3"
-screenWidth: u32 = 1280
-screenHeight: u32 = 720
-
+screenWidth: u32 = 1600
+screenHeight: u32 = 900
+quit: bool
 seed: u64 = 123
 // device: ^sdl.GPUDevice
 window: ^sdl.Window
@@ -16,7 +16,13 @@ totalTime: f64 = 0
 nearPlane: f32 : 0.1
 farPlane: f32 : 160.0
 NUM_CORES := -1
-
+GameScreen :: enum {
+	MainMenu,
+	SpRealms,
+	Loading,
+	Game,
+}
+CurrGameScreen: GameScreen = .MainMenu
 
 SIMULATION_TICK_RATE :: 60
 

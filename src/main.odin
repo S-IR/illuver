@@ -13,6 +13,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:prof/spall"
 import "core:sync"
+import "core:thread"
 import "core:time"
 import "gs"
 import "ui"
@@ -165,14 +166,8 @@ main :: proc() {
 
 	// sdl_ensure(sdl.ClaimWindowForGPUDevice(device, window) != false)
 
-	currCamera := camera.Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
 
-	chunks_init(&currCamera)
-	energyTickNow := time.tick_now()
-	gs.LastLifeTick = energyTickNow
-	gs.LastWisdomTick = energyTickNow
-	gs.LastLightTick = energyTickNow
-	defer chunks_destroy()
+	when ODIN_DEBUG do defer chunks_destroy()
 
 
 	pointPipeline := point_pipeline_init()
@@ -183,7 +178,6 @@ main :: proc() {
 
 
 	e: sdl.Event
-	quit := false
 
 	lastFrameTime := time.now()
 	TARGET_FPS :: 144
@@ -206,8 +200,40 @@ main :: proc() {
 	mouseX, mouseY: f32
 
 	vkh.loader_command_buffer_wait_and_destroy(loadCb, fence)
+	gs.CurrGameScreen = .MainMenu
 
-	for !quit {
+	prevLeftClick: bool
+	chunkInitThread := thread.create(chunks_init_worker_thread)
+	when ODIN_DEBUG {
+		// defer {
+		// 	if .Started in chunkInitThread.flags {
+		// 		thread.join(chunkInitThread)
+
+		// 		if chunkInitThread.data != nil do free(chunkInitThread.data)
+		// 	}
+		// }
+		defer thread.destroy(chunkInitThread)
+
+	}
+
+	chunks_init_worker_thread :: proc(t: ^thread.Thread) {
+		if t.data == nil do return
+		chunks_destroy()
+
+		seedToStart := ((^u64)(t.data))^
+		gs.seed = seedToStart
+
+		camera.curr = camera.Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
+		chunks_init(&camera.curr)
+		energyTickNow := time.tick_now()
+		gs.LastLifeTick = energyTickNow
+		gs.LastWisdomTick = energyTickNow
+		gs.LastLightTick = energyTickNow
+
+		gs.CurrGameScreen = .Game
+
+	}
+	for !gs.quit {
 		tracy.FrameMark()
 		tracy.Plot("Test", f64(time.now()._nsec))
 		defer free_all(context.temp_allocator)
@@ -232,12 +258,12 @@ main :: proc() {
 			OCTAVE_STEP :: 1
 			#partial switch e.type {
 			case .QUIT:
-				quit = true
+				gs.quit = true
 				break
 			case .KEY_DOWN:
 				switch e.key.key {
 				case sdl.K_ESCAPE:
-					quit = true
+					gs.quit = true
 				case sdl.K_1:
 					spellbar_select(&inventory, 0)
 				case sdl.K_2:
@@ -266,7 +292,7 @@ main :: proc() {
 					vkh.updateSwapchain = true
 				}
 			case .MOUSE_MOTION:
-				camera.Camera_process_mouse_movement(&currCamera, e.motion.xrel, e.motion.yrel)
+				camera.Camera_process_mouse_movement(&camera.curr, e.motion.xrel, e.motion.yrel)
 				mouseX = f32(e.motion.x)
 				mouseY = f32(e.motion.y)
 			case .MOUSE_BUTTON_DOWN:
@@ -285,262 +311,320 @@ main :: proc() {
 		leftClickIsHeldThisFrame := .LEFT in sdl.GetMouseState(nil, nil)
 		vkh.vulkan_update_swapchain()
 
-		ticksToDo: bit_set[EnergyType] = {}
-		if time.tick_since(gs.LastLifeTick) >= gs.LifeInterval {
-			ticksToDo += {.Life}
-			// energy_tick({.Life})
+
+		currLeft := .LEFT in sdl.GetMouseState(nil, nil)
+		defer prevLeftClick = currLeft
+		leftClickPressed := currLeft && !prevLeftClick
+
+		mouseState := MouseState {
+			x            = mouseX,
+			y            = mouseY,
+			didLeftClick = leftClickPressed,
 		}
 
-		if time.tick_since(gs.LastWisdomTick) >= gs.WisdomInterval {
-			ticksToDo += {.Wisdom}
-			// energy_tick({.Wisdom})
-		}
+		switch gs.CurrGameScreen {
+		case .MainMenu:
+			main_menu_render(font, mouseState, {uiPipeline = &uiPipeline})
+		case .SpRealms:
+			sp_realm_menu_render(font, mouseState, {uiPipeline = &uiPipeline})
+		case .Loading:
+			if .Started not_in chunkInitThread.flags {
+				if (chunkInitThread.data != nil) do free(chunkInitThread.data)
 
-		if time.tick_since(gs.LastLightTick) >= gs.LightInterval {
-			ticksToDo += {.Light}
+				newSeed := new(u64, context.allocator)
+				newSeed^ = gs.seed
+				chunkInitThread.data = newSeed
+				thread.start(chunkInitThread)
 
-			// energy_tick({.Light})
-		}
-		if ticksToDo != {} {
-			energy_tick(ticksToDo)
-			if .Light in ticksToDo {
-				gs.LastLightTick = time.tick_now()
+
 			}
-			if .Wisdom in ticksToDo {
-				gs.LastWisdomTick = time.tick_now()
-			}
-			if .Life in ticksToDo {
-				gs.LastLifeTick = time.tick_now()
-			}
-		}
-
-		camera.camera_process_keyboard_movement(&currCamera)
-
-		chunks_frame_update(&currCamera)
-		// chunks_shift_per_player_movement(&camera)
-		// fmt.println("camera pos", camera.pos)
-		view, proj := camera.Camera_view_proj(&currCamera)
-		cameraPtr: rawptr
-		vma.map_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc, &cameraPtr)
-		currCameraUBO := vkh.CameraUBO {
-			view = view,
-			proj = proj,
-		}
-
-		mem.copy(cameraPtr, &currCameraUBO, size_of(currCameraUBO))
-		vma.unmap_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc)
-
-
-		rayDir := compute_mouse_ray(mouseX, mouseY, gs.screenWidth, gs.screenHeight, view, proj)
-
-		inventorySelectedPoint := inventory_get_selected_point(&inventory)
-		hasItemToPlace := inventorySelectedPoint != .Air
-
-		// raycastPointHit: u16 = 0
-		// raycastPointPos: [3]f32
-		// raycastDidHappen: bool
-		raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(
-			currCamera.pos,
-			currCamera.front,
-			currCamera,
-			hasItemToPlace,
-		)
-		// fmt.print("camera pos ", currCamera.pos)
-		// fmt.print(" raycastPointPos", raycastPointPos)
-		// fmt.print(" 0 4 -2 point", get_point_at_world_pos({0, 4, -2}, currCamera))
-
-		fmt.println(" raycastPointHit", raycastPointHit)
-
-		raycastIf: if raycastDidHappen && leftClickIsHeldThisFrame {
-			changed, prev := chunk_set_point(raycastPointPos, PointType.Air)
-			if u16_to_point_type(prev) != .Air {
-				inventory_add_item(&inventory, u16_to_point_type(prev))
+			loading_screen_render(font, {uiPipeline = &uiPipeline})
+		case .Game:
+			ticksToDo: bit_set[EnergyType] = {}
+			if time.tick_since(gs.LastLifeTick) >= gs.LifeInterval {
+				ticksToDo += {.Life}
+				// energy_tick({.Life})
 			}
 
-			// if !changed do break raycastIf
-		}
-
-		if raycastDidHappen &&
-		   pressedRightClickThisFrame &&
-		   u16_to_point_type(raycastPointHit) == .Air {
-			if inventorySelectedPoint != .Air {
-				inventory_reduce_amount_from_selected(&inventory)
-				chunk_set_point(raycastPointPos, inventorySelectedPoint)
+			if time.tick_since(gs.LastWisdomTick) >= gs.WisdomInterval {
+				ticksToDo += {.Wisdom}
+				// energy_tick({.Wisdom})
 			}
 
-		}
-		// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
+			if time.tick_since(gs.LastLightTick) >= gs.LightInterval {
+				ticksToDo += {.Light}
+				// energy_tick({.Light})
+			}
+			if ticksToDo != {} {
+				energy_tick(ticksToDo)
+				if .Light in ticksToDo {
+					gs.LastLightTick = time.tick_now()
+				}
+				if .Wisdom in ticksToDo {
+					gs.LastWisdomTick = time.tick_now()
+				}
+				if .Life in ticksToDo {
+					gs.LastLifeTick = time.tick_now()
+				}
+			}
 
-		// vkh.vulkan_update_swapchain()
-		vkh.chk(vk.WaitForFences(vkh.device, 1, &vkh.fences[vkh.frameIndex], true, max(u64)))
-		vkh.vk_run_deferred_buffer_releases(vkh.frameIndex)
-
-		vkh.chk(vk.ResetFences(vkh.device, 1, &vkh.fences[vkh.frameIndex]))
-		vkh.vk_chk_swapchain(
-			vk.AcquireNextImageKHR(
-				vkh.device,
-				vkh.swapchain,
-				max(u64),
-				vkh.presentSemaphores[vkh.frameIndex],
-				vk.Fence{},
-				&vkh.imageIndex,
-			),
-		)
-
-
-		cb := vkh.drawCommandBuffers[vkh.frameIndex]
-		vkh.chk(vk.ResetCommandBuffer(cb, {}))
-
-		vkh.chk(
-			vk.BeginCommandBuffer(
-				cb,
-				&{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
-			),
-		)
-		barriers := [?]vk.ImageMemoryBarrier2 {
-			{
-				sType = .IMAGE_MEMORY_BARRIER_2,
-				srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
-				srcAccessMask = {},
-				dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
-				dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
-				oldLayout = .UNDEFINED,
-				newLayout = .ATTACHMENT_OPTIMAL,
-				image = vkh.swapchainImages[vkh.imageIndex],
-				subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
-			},
-			{
-				sType = .IMAGE_MEMORY_BARRIER_2,
-				srcStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
-				srcAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
-				dstStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
-				dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
-				oldLayout = .UNDEFINED,
-				newLayout = .ATTACHMENT_OPTIMAL,
-				image = vkh.depthImage,
-				subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
-			},
-		}
-		vk.CmdPipelineBarrier2(
-			cb,
-			&{
-				sType = .DEPENDENCY_INFO,
-				imageMemoryBarrierCount = len(barriers),
-				pImageMemoryBarriers = raw_data(barriers[:]),
-			},
-		)
-		vk.CmdBeginRendering(
-			cb,
-			&{
-				sType = .RENDERING_INFO,
-				renderArea = {extent = {width = gs.screenWidth, height = gs.screenHeight}},
-				layerCount = 1,
-				colorAttachmentCount = 1,
-				pColorAttachments = &vk.RenderingAttachmentInfo {
-					sType = .RENDERING_ATTACHMENT_INFO,
-					imageView = vkh.swpachainImageViews[vkh.imageIndex],
-					imageLayout = .ATTACHMENT_OPTIMAL,
-					loadOp = .CLEAR,
-					storeOp = .STORE,
-					clearValue = {color = {float32 = {0.2, 0.4, 0.6, 1}}},
+			game_render(
+				&camera.curr,
+				&inventory,
+				mouseX,
+				mouseY,
+				leftClickIsHeldThisFrame,
+				pressedRightClickThisFrame,
+				{
+					highlightSpere = &highlightSphere,
+					pointPipeline = &pointPipeline,
+					uiPipeline = &uiPipeline,
 				},
-				pDepthAttachment = &vk.RenderingAttachmentInfo {
-					sType = .RENDERING_ATTACHMENT_INFO,
-					imageView = vkh.depthImageView,
-					imageLayout = .ATTACHMENT_OPTIMAL,
-					loadOp = .CLEAR,
-					storeOp = .DONT_CARE,
-					clearValue = {depthStencil = {1, 0}},
-				},
-			},
-		)
-		MIN_RANGE_TO_SEE_POINT :: 6.0
-		if raycastDidHappen &&
-		   !leftClickIsHeldThisFrame &&
-		   linalg.length(currCamera.pos - raycastPointPos) < MIN_RANGE_TO_SEE_POINT {
-			highlight_sphere_draw(
-				cb,
-				&highlightSphere,
-				vkh.cameraBuffers[vkh.frameIndex].buffer,
-				vk.DeviceSize(size_of(vkh.CameraUBO)),
-				raycastPointPos,
-				f32(gs.totalTime),
 			)
 
 		}
 
-		chunks_draw(
-			cb,
-			&pointPipeline,
-			vkh.cameraBuffers[vkh.frameIndex].buffer,
-			vk.DeviceSize(size_of(vkh.CameraUBO)),
-			&currCamera,
-		)
+	}
+}
+game_render :: proc(
+	currCamera: ^camera.Camera,
+	inventory: ^Inventory,
+	mouseX, mouseY: f32,
+	leftClickIsHeldThisFrame, pressedRightClickThisFrame: bool,
+	renderData: struct {
+		highlightSpere: ^HighlightSphere,
+		pointPipeline:  ^vkh.PipelineData,
+		uiPipeline:     ^vkh.PipelineData,
+	},
+) {
+	camera.camera_process_keyboard_movement(currCamera)
+
+	chunks_frame_update(currCamera)
+	// chunks_shift_per_player_movement(&camera)
+	// fmt.println("camera pos", camera.pos)
+	view, proj := camera.Camera_view_proj(currCamera)
+	cameraPtr: rawptr
+	vma.map_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc, &cameraPtr)
+	currCameraUBO := vkh.CameraUBO {
+		view = view,
+		proj = proj,
+	}
+
+	mem.copy(cameraPtr, &currCameraUBO, size_of(currCameraUBO))
+	vma.unmap_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc)
 
 
-		spellbar_render(&inventory)
-		ui.add_text("TAKING SOULS", font, 32, 20, 20, [4]f32{1, 1, 1, 1})
+	rayDir := compute_mouse_ray(mouseX, mouseY, gs.screenWidth, gs.screenHeight, view, proj)
 
+	inventorySelectedPoint := inventory_get_selected_point(inventory)
+	hasItemToPlace := inventorySelectedPoint != .Air
 
-		ui.render(cb, uiPipeline)
+	// raycastPointHit: u16 = 0
+	// raycastPointPos: [3]f32
+	// raycastDidHappen: bool
+	raycastPointHit, raycastPointPos, raycastDidHappen := raycast_get_viewed_point(
+		currCamera.pos,
+		currCamera.front,
+		currCamera^,
+		hasItemToPlace,
+	)
+	// fmt.print("camera pos ", currCamera.pos)
+	// fmt.print(" raycastPointPos", raycastPointPos)
+	// fmt.print(" 0 4 -2 point", get_point_at_world_pos({0, 4, -2}, currCamera))
 
-		vk.CmdEndRendering(cb)
+	// fmt.println(" raycastPointHit", raycastPointHit)
 
-		vk.CmdPipelineBarrier2(
-			cb,
-			&{
-				sType = .DEPENDENCY_INFO,
-				imageMemoryBarrierCount = 1,
-				pImageMemoryBarriers = &vk.ImageMemoryBarrier2 {
-					sType = .IMAGE_MEMORY_BARRIER_2,
-					srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
-					srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
-					dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
-					dstAccessMask = {},
-					oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
-					newLayout = .PRESENT_SRC_KHR,
-					image = vkh.swapchainImages[vkh.imageIndex],
-					subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
-				},
-			},
-		)
-		vk.EndCommandBuffer(cb)
-		waitStage: vk.PipelineStageFlags = {.COLOR_ATTACHMENT_OUTPUT}
-		vkh.chk(
-			vk.QueueSubmit(
-				vkh.queue,
-				1,
-				&vk.SubmitInfo {
-					sType = .SUBMIT_INFO,
-					waitSemaphoreCount = 1,
-					pWaitSemaphores = &vkh.presentSemaphores[vkh.frameIndex],
-					pWaitDstStageMask = &waitStage,
-					commandBufferCount = 1,
-					pCommandBuffers = &cb,
-					signalSemaphoreCount = 1,
-					pSignalSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
-				},
-				vkh.fences[vkh.frameIndex],
-			),
-		)
-		vkh.frameIndex = (vkh.frameIndex + 1) % vkh.MAX_FRAMES_IN_FLIGHT
+	raycastIf: if raycastDidHappen && leftClickIsHeldThisFrame {
+		changed, prev := chunk_set_point(raycastPointPos, PointType.Air)
+		if u16_to_point_type(prev) != .Air {
+			inventory_add_item(inventory, u16_to_point_type(prev))
+		}
 
-		ui.frame_reset()
+		// if !changed do break raycastIf
+	}
 
-		vkh.vk_chk_swapchain(
-			vk.QueuePresentKHR(
-				vkh.queue,
-				&{
-					sType = .PRESENT_INFO_KHR,
-					waitSemaphoreCount = 1,
-					pWaitSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
-					swapchainCount = 1,
-					pSwapchains = &vkh.swapchain,
-					pImageIndices = &vkh.imageIndex,
-				},
-			),
-		)
-
+	if raycastDidHappen &&
+	   pressedRightClickThisFrame &&
+	   u16_to_point_type(raycastPointHit) == .Air {
+		if inventorySelectedPoint != .Air {
+			inventory_reduce_amount_from_selected(inventory)
+			chunk_set_point(raycastPointPos, inventorySelectedPoint)
+		}
 
 	}
+
+	// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
+	cb := vkh.drawCommandBuffers[vkh.frameIndex]
+	vk_begin_frame(cb)
+	if raycastDidHappen && !leftClickIsHeldThisFrame {
+		highlight_sphere_draw(
+			cb,
+			renderData.highlightSpere,
+			vkh.cameraBuffers[vkh.frameIndex].buffer,
+			vk.DeviceSize(size_of(vkh.CameraUBO)),
+			raycastPointPos,
+			f32(gs.totalTime),
+		)
+
+	}
+
+	chunks_draw(
+		cb,
+		renderData.pointPipeline,
+		vkh.cameraBuffers[vkh.frameIndex].buffer,
+		vk.DeviceSize(size_of(vkh.CameraUBO)),
+		currCamera,
+	)
+
+
+	spellbar_render(inventory)
+	// ui.add_text("TAKING SOULS", font, 32, 20, 20, [4]f32{1, 1, 1, 1})
+
+
+	ui.render(cb, renderData.uiPipeline^)
+	vk_end_frame(&cb)
+}
+
+
+vk_begin_frame :: proc(cb: vk.CommandBuffer) {
+	vkh.chk(vk.WaitForFences(vkh.device, 1, &vkh.fences[vkh.frameIndex], true, max(u64)))
+	vkh.vk_run_deferred_buffer_releases(vkh.frameIndex)
+	vkh.chk(vk.ResetFences(vkh.device, 1, &vkh.fences[vkh.frameIndex]))
+	sync.sema_post(&vkh.framesReady[vkh.frameIndex])
+
+	vkh.vk_chk_swapchain(
+		vk.AcquireNextImageKHR(
+			vkh.device,
+			vkh.swapchain,
+			max(u64),
+			vkh.presentSemaphores[vkh.frameIndex],
+			vk.Fence{},
+			&vkh.imageIndex,
+		),
+	)
+
+	vkh.chk(vk.ResetCommandBuffer(cb, {}))
+	vkh.chk(
+		vk.BeginCommandBuffer(
+			cb,
+			&{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
+		),
+	)
+
+	imageMemoryBarriers := [?]vk.ImageMemoryBarrier2 {
+		{
+			sType = .IMAGE_MEMORY_BARRIER_2,
+			srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
+			oldLayout = .UNDEFINED,
+			newLayout = .ATTACHMENT_OPTIMAL,
+			image = vkh.swapchainImages[vkh.imageIndex],
+			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
+		},
+		{
+			sType = .IMAGE_MEMORY_BARRIER_2,
+			srcStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+			dstStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+			dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
+			oldLayout = .UNDEFINED,
+			newLayout = .ATTACHMENT_OPTIMAL,
+			image = vkh.depthImage,
+			subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
+		},
+	}
+	vk.CmdPipelineBarrier2(
+		cb,
+		&{
+			sType = .DEPENDENCY_INFO,
+			imageMemoryBarrierCount = 2,
+			pImageMemoryBarriers = raw_data(imageMemoryBarriers[:]),
+		},
+	)
+
+	vk.CmdBeginRendering(
+		cb,
+		&{
+			sType = .RENDERING_INFO,
+			renderArea = {extent = {width = gs.screenWidth, height = gs.screenHeight}},
+			layerCount = 1,
+			colorAttachmentCount = 1,
+			pColorAttachments = &vk.RenderingAttachmentInfo {
+				sType = .RENDERING_ATTACHMENT_INFO,
+				imageView = vkh.swpachainImageViews[vkh.imageIndex],
+				imageLayout = .ATTACHMENT_OPTIMAL,
+				loadOp = .CLEAR,
+				storeOp = .STORE,
+				clearValue = {color = {float32 = {0.2, 0.4, 0.6, 1}}},
+			},
+			pDepthAttachment = &vk.RenderingAttachmentInfo {
+				sType = .RENDERING_ATTACHMENT_INFO,
+				imageView = vkh.depthImageView,
+				imageLayout = .ATTACHMENT_OPTIMAL,
+				loadOp = .CLEAR,
+				storeOp = .DONT_CARE,
+				clearValue = {depthStencil = {1, 0}},
+			},
+		},
+	)
+}
+
+vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
+	vk.CmdEndRendering(cb^)
+
+	vk.CmdPipelineBarrier2(
+		cb^,
+		&{
+			sType = .DEPENDENCY_INFO,
+			imageMemoryBarrierCount = 1,
+			pImageMemoryBarriers = &vk.ImageMemoryBarrier2 {
+				sType = .IMAGE_MEMORY_BARRIER_2,
+				srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+				dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+				srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
+				oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
+				newLayout = .PRESENT_SRC_KHR,
+				image = vkh.swapchainImages[vkh.imageIndex],
+				subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
+			},
+		},
+	)
+
+	vk.EndCommandBuffer(cb^)
+
+	waitStage: vk.PipelineStageFlags = {.COLOR_ATTACHMENT_OUTPUT}
+	vkh.chk(
+		vk.QueueSubmit(
+			vkh.queue,
+			1,
+			&vk.SubmitInfo {
+				sType = .SUBMIT_INFO,
+				waitSemaphoreCount = 1,
+				pWaitSemaphores = &vkh.presentSemaphores[vkh.frameIndex],
+				pWaitDstStageMask = &waitStage,
+				commandBufferCount = 1,
+				pCommandBuffers = cb,
+				signalSemaphoreCount = 1,
+				pSignalSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
+			},
+			vkh.fences[vkh.frameIndex],
+		),
+	)
+
+	vkh.frameIndex = (vkh.frameIndex + 1) % vkh.MAX_FRAMES_IN_FLIGHT
+	ui.frame_reset()
+
+	vkh.vk_chk_swapchain(
+		vk.QueuePresentKHR(
+			vkh.queue,
+			&{
+				sType = .PRESENT_INFO_KHR,
+				waitSemaphoreCount = 1,
+				pWaitSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
+				swapchainCount = 1,
+				pSwapchains = &vkh.swapchain,
+				pImageIndices = &vkh.imageIndex,
+			},
+		),
+	)
 }

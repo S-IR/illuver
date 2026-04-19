@@ -3,6 +3,9 @@ import "../gs"
 import "core:math"
 import "core:math/linalg"
 import sdl "vendor:sdl3"
+
+curr: Camera
+
 CAMERA_MOVEMENT :: enum {
 	FORWARD,
 	BACKWARD,

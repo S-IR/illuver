@@ -1,6 +1,11 @@
 package ui
 import "../gs"
 import "core:container/small_array"
+is_rect_hovered :: proc(mouse: struct {
+		x, y: f32,
+	}, x, y, w, h: f32) -> bool {
+	return mouse.x >= x && mouse.x <= x + w && mouse.y >= y && mouse.y <= y + h
+}
 add_rect :: proc(x, y, w, h: f32, color: [4]f32) {
 	assert(w > 0)
 	assert(h > 0)

@@ -8,6 +8,7 @@ import "../../modules/tracy"
 import "../gs"
 import "core:log"
 import os "core:os"
+import "core:sync"
 import sdl "vendor:sdl3"
 GPUTexture :: struct {
 	image:      vk.Image,
@@ -42,6 +43,8 @@ vmaDepthStencilAlloc: vma.Allocation
 depthImageView: vk.ImageView
 
 fences := [MAX_FRAMES_IN_FLIGHT]vk.Fence{}
+framesReady: [MAX_FRAMES_IN_FLIGHT]sync.Sema
+
 presentSemaphores := [MAX_FRAMES_IN_FLIGHT]vk.Semaphore{}
 renderSemaphores: []vk.Semaphore = nil
 
@@ -486,7 +489,7 @@ vulkan_init :: proc() {
 	for i in renderSemaphores do ensure(i != {})
 	for i in renderSemaphores do ensure(i != {})
 	for i in fences do ensure(i != {})
-
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT do sync.sema_post(&framesReady[i])
 	{
 		tracy.Zone()
 

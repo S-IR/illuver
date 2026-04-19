@@ -73,6 +73,7 @@ CHUNKS_PER_DIRECTION :: 5
 ENERGY_TICKING_DIRECTION_LEN :: CHUNKS_PER_DIRECTION
 Chunks := [CHUNKS_PER_DIRECTION][CHUNKS_PER_DIRECTION]Chunk{}
 
+
 ChunkPrevEnergyCache: [dynamic]u16
 CHUNK_MIDDLE_X_INDEX :: (CHUNKS_PER_DIRECTION / 2)
 CHUNK_MIDDLE_Z_INDEX :: (CHUNKS_PER_DIRECTION / 2)
@@ -83,6 +84,7 @@ WorldArena := vmem.Arena{}
 WorldAllocator := mem.Allocator{}
 
 chunks_init :: proc(c: ^camera.Camera) {
+	chunkShutdown = false
 	centerChunk := int2{i32(c.pos.x), i32(c.pos.z)} / CHUNK_SIZE
 	half :: CHUNKS_PER_DIRECTION / 2
 
@@ -928,55 +930,17 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk.totalPoints = u32(staticVisiblePointsLen)
 		chunk.totalIndices = u32(staticIndicesLen)
 
-		safeIndices: [vkh.MAX_FRAMES_IN_FLIGHT]bool
-		pendingFences := [vkh.MAX_FRAMES_IN_FLIGHT]vk.Fence{}
-		pendingIndices := [vkh.MAX_FRAMES_IN_FLIGHT]u32{}
-		pendingLen := 0
-
 		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-			// A fence is "safe" if it's signaled OR if it hasn't been submitted yet
-			// (which we know because the frame index hasn't wrapped past it)
-			if vk.GetFenceStatus(vkh.device, vkh.fences[i]) == .SUCCESS {
-				safeIndices[i] = true
-			} else {
-				pendingFences[pendingLen] = vkh.fences[i]
-				pendingIndices[pendingLen] = i
-				pendingLen += 1
-			}
-		}
-
-		// Upload to all safe buffers immediately
-		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-			if safeIndices[i] {
-				upload_to_buffer(
-					chunk,
-					state,
-					i,
-					staticVisiblePointsLen,
-					staticIndicesLen,
-					staticColorsLen,
-				)
-			}
-		}
-
-		if pendingLen > 0 {
-			vk.WaitForFences(
-				vkh.device,
-				u32(pendingLen),
-				raw_data(pendingFences[0:pendingLen]),
-				true,
-				max(u64),
+			sync.sema_wait(&vkh.framesReady[i])
+			upload_to_buffer(
+				chunk,
+				state,
+				u32(i),
+				staticVisiblePointsLen,
+				staticIndicesLen,
+				staticColorsLen,
 			)
-			for i in 0 ..< pendingLen {
-				upload_to_buffer(
-					chunk,
-					state,
-					pendingIndices[i],
-					staticVisiblePointsLen,
-					staticIndicesLen,
-					staticColorsLen,
-				)
-			}
+			sync.sema_post(&vkh.framesReady[i])
 		}
 		upload_to_buffer :: proc(
 			chunk: ^Chunk,
@@ -1137,8 +1101,8 @@ get_or_create_mapper_idx :: proc "contextless" (
 
 }
 point_real_world_position :: #force_inline proc "contextless" (worldXYZ: [3]f32) -> [3]f32 {
-	return worldXYZ
-	// return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), gs.seed)
+	// return worldXYZ
+	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), gs.seed)
 }
 calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -> [3]f32 {
 	h := u32(x) * 0x9e3779b9 + u32(y) * 0x85ebca6b + u32(z) * 0x27d4eb2d + u32(gs.seed)
@@ -1183,6 +1147,7 @@ chunks_draw :: proc(
 			chunk := &Chunks[x][y]
 			// if chunk.pos != {0, 0} do continue
 			if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
+			assert(chunk.totalIndices > 0)
 			if chunk.totalIndices == 0 do continue
 
 
