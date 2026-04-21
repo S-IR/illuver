@@ -1,4 +1,5 @@
 package main
+import "camera"
 import "core:fmt"
 import "core:path/filepath"
 import "core:strings"
@@ -7,7 +8,6 @@ import "ui"
 import stbImage "vendor:stb/image"
 import vk "vendor:vulkan"
 import "vkh"
-
 
 // Spellbar ::
 
@@ -19,7 +19,7 @@ InventorySlot :: struct {
 	count: u8,
 }
 #assert(max(type_of(InventorySlot{}.count)) >= INVENTORY_SLOT_MAX_COUNT)
-Inventory :: struct {
+InventoryData :: struct {
 	spellbar: struct {
 		spells:   [9]InventorySlot,
 		selected: uint,
@@ -27,6 +27,9 @@ Inventory :: struct {
 	bag:      struct {
 		default: [DEFAULT_BAG_SIZE]InventorySlot,
 	},
+}
+Inventory :: struct {
+	data:     InventoryData,
 	usedFont: ui.BMFont,
 }
 InventoryTexturesAtlas := vkh.GPUTexture{}
@@ -54,16 +57,16 @@ inventory_init :: proc(cb: vk.CommandBuffer, usedFont: ui.BMFont) -> (inventory:
 	inputs.channels = DESIRED_CHANNELS
 	InventoryTexturesAtlas = vkh.load_image(inputs, cb)
 
-	inventory.spellbar.selected = 0
+	inventory.data.spellbar.selected = 0
 	inventory.usedFont = usedFont
 	return inventory
 }
 inventory_destroy :: proc(i: ^Inventory) {
-	vkh.gpu_texture_destroy(InventoryTexturesAtlas)
+	if (i != nil) do vkh.gpu_texture_destroy(InventoryTexturesAtlas)
 }
 spellbar_select :: proc(inventory: ^Inventory, val: uint) {
 	assert(val >= 0 && val <= 8)
-	inventory.spellbar.selected = val
+	inventory.data.spellbar.selected = val
 
 	// TexturesPerPointType[.YellowDirt] = vkh.
 }
@@ -77,7 +80,7 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 	hasEmptySlotInventoryType: InventoryType
 
 
-	for &spell, i in inventory.spellbar.spells {
+	for &spell, i in inventory.data.spellbar.spells {
 		if emptySlotIdx == -1 && spell.val == .Air {
 			emptySlotIdx = int(i)
 			hasEmptySlotInventoryType = .Spellbar
@@ -96,7 +99,7 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 		}
 
 	}
-	for &b, i in inventory.bag.default {
+	for &b, i in inventory.data.bag.default {
 		if emptySlotIdx == -1 && b.val == .Air {
 			emptySlotIdx = i
 			hasEmptySlotInventoryType = .BagDefault
@@ -116,15 +119,15 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 	if emptySlotIdx != -1 {
 		switch hasEmptySlotInventoryType {
 		case .Spellbar:
-			assert(inventory.spellbar.spells[emptySlotIdx] == {})
+			assert(inventory.data.spellbar.spells[emptySlotIdx] == {})
 
-			inventory.spellbar.spells[emptySlotIdx] = {
+			inventory.data.spellbar.spells[emptySlotIdx] = {
 				count = 1,
 				val   = point,
 			}
 		case .BagDefault:
-			assert(inventory.bag.default[emptySlotIdx] == {})
-			inventory.bag.default[emptySlotIdx] = {
+			assert(inventory.data.bag.default[emptySlotIdx] == {})
+			inventory.data.bag.default[emptySlotIdx] = {
 				count = 1,
 				val   = point,
 			}
@@ -134,14 +137,14 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 	return false
 }
 inventory_get_selected_point :: proc(inventory: ^Inventory) -> PointType {
-	return inventory.spellbar.spells[inventory.spellbar.selected].val
+	return inventory.data.spellbar.spells[inventory.data.spellbar.selected].val
 }
 inventory_reduce_amount_from_selected :: proc(inventory: ^Inventory) {
-	assert(inventory.spellbar.selected != 1)
-	assert(inventory.spellbar.spells[inventory.spellbar.selected] != {})
-	inventory.spellbar.spells[inventory.spellbar.selected].count -= 1
-	if inventory.spellbar.spells[inventory.spellbar.selected].count == 0 {
-		inventory.spellbar.spells[inventory.spellbar.selected] = {}
+	assert(inventory.data.spellbar.selected != 1)
+	assert(inventory.data.spellbar.spells[inventory.data.spellbar.selected] != {})
+	inventory.data.spellbar.spells[inventory.data.spellbar.selected].count -= 1
+	if inventory.data.spellbar.spells[inventory.data.spellbar.selected].count == 0 {
+		inventory.data.spellbar.spells[inventory.data.spellbar.selected] = {}
 	}
 
 }
@@ -150,16 +153,16 @@ spellbar_render :: proc(inventory: ^Inventory) {
 	// add_rect(f32(0), f32(0), f32(gs.screenWidth), f32(gs.screenHeight), [4]f32{.1, .1, .1, .25})
 	halfScreen := gs.screenWidth / 2
 	spellbarLen := halfScreen - halfScreen / 5
-	spellbarOneSpellWidth := spellbarLen / len(inventory.spellbar.spells)
+	spellbarOneSpellWidth := spellbarLen / len(inventory.data.spellbar.spells)
 	spellbarOneSpellHeight := spellbarOneSpellWidth * 1
 
 	currX := halfScreen - spellbarLen / 2
 	currY := gs.screenHeight - spellbarOneSpellHeight - 30
 
-	for spell, i in inventory.spellbar.spells {
+	for spell, i in inventory.data.spellbar.spells {
 		if spell.val == .Air {
 			color :=
-				[4]f32{.03, .27, .86, 1} if uint(i) != inventory.spellbar.selected else [4]f32{1, 1, 1, 1}
+				[4]f32{.03, .27, .86, 1} if uint(i) != inventory.data.spellbar.selected else [4]f32{1, 1, 1, 1}
 			ui.add_rect(
 				f32(currX),
 				f32(currY),

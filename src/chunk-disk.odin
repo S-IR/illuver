@@ -107,7 +107,8 @@ irrf_set_chunk :: proc(
 					irrfFile.handle, osErr = os.open(irrfFile.path, {.Read, .Write})
 					ensure(osErr == nil, "could not open irrf file")
 				} else {
-					os.mkdir_all(filepath.dir(irrfFile.path, context.temp_allocator))
+					osErr = os.mkdir_all(filepath.dir(irrfFile.path, context.temp_allocator))
+					if osErr != .Exist do ensure(osErr == nil)
 					irrfFile.handle, osErr = os.create(irrfFile.path)
 					ensure(osErr == nil)
 				}
@@ -201,7 +202,6 @@ irrf_get_chunk :: proc(
 				irrfFile.handle, osErr = os.open(irrfFilePath, {.Read, .Write})
 				ensure(osErr == nil)
 				irrfFile.path = irrfFilePath
-				ensure(osErr == nil)
 
 
 				_, osErr = os.read_at(
@@ -211,7 +211,7 @@ irrf_get_chunk :: proc(
 				)
 				ensure(osErr == nil)
 
-				decompress_to_buffer(irrfFile.handle, mem.slice_to_bytes(irrfFile.data[:]))
+				irrf_decompress_to_buffer(irrfFile.handle, mem.slice_to_bytes(irrfFile.data[:]))
 				// defer delete(compressed, context.temp_allocator)
 
 			}
@@ -250,19 +250,22 @@ compress_to_file :: proc(handle: ^os.File, data: []byte) {
 
 	size := lz4.compress_default(raw_data(data), raw_data(compressed), i32(len(data)), bound)
 	ensure(size > 0)
+	osErr: os.Error
 
-	os.seek(handle, IRRF_HEADER_SIZE, .Start)
-	_, osErr := os.write(handle, compressed[:size])
+	_, osErr = os.seek(handle, IRRF_HEADER_SIZE, .Start)
+	ensure(osErr == nil)
+
+
+	_, osErr = os.write(handle, compressed[:size])
 	ensure(osErr == nil)
 }
 
-decompress_to_buffer :: proc(handle: ^os.File, out: []byte) {
+irrf_decompress_to_buffer :: proc(handle: ^os.File, out: []byte) {
 	fileSize, _ := os.file_size(handle)
 	compressed := make([]byte, fileSize - IRRF_HEADER_SIZE, context.temp_allocator)
 
 	os.seek(handle, IRRF_HEADER_SIZE, .Start)
 	_, osErr := os.read(handle, compressed)
-
 	decompressed := lz4.decompress_safe(
 		raw_data(compressed),
 		raw_data(out),

@@ -159,7 +159,9 @@ main :: proc() {
 	when ODIN_DEBUG do defer inventory_destroy(&inventory)
 	// assert(inventory != {})
 	// assert(uiPipeline != {})
+	userInfoFileHandle: ^os.File
 
+	when ODIN_DEBUG do defer if (userInfoFileHandle != nil) do os.close(userInfoFileHandle)
 
 	// sdl_ensure(device != nil)
 	// defer sdl.DestroyGPUDevice(device)
@@ -212,11 +214,15 @@ main :: proc() {
 
 	}
 
+	ChunksInitWorkerThreadData :: struct {
+		inventoryPtr:       ^Inventory,
+		userInfoFileHandle: ^os.File,
+		currCamera:         ^camera.Camera,
+	}
 	chunks_init_worker_thread :: proc(t: ^thread.Thread) {
 		chunks_destroy()
 
 
-		camera.curr = camera.Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
 		chunks_init(&camera.curr)
 		energyTickNow := time.tick_now()
 		gs.LastLifeTick = energyTickNow
@@ -322,10 +328,21 @@ main :: proc() {
 			sp_realm_menu_render(font, mouseState, {uiPipeline = &uiPipeline})
 		case .Loading:
 			if .Started not_in chunkInitThread.flags {
-				if (chunkInitThread.data != nil) do free(chunkInitThread.data)
+				// if (chunkInitThread.data != nil) do free(chunkInitThread.data)
 
-				newSeed := gs.seed
-				chunkInitThread.data = &newSeed
+				existingInfo: User_Info_Per_Save
+				foundExisting: bool
+				userInfoFileHandle, existingInfo, foundExisting = user_info_realm_init()
+				assert(userInfoFileHandle != nil)
+
+				if !foundExisting {
+					camera.curr = camera.Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
+				} else {
+					camera.curr = existingInfo.currCamera
+					inventory.data = existingInfo.inventoryData
+				}
+
+
 				thread.start(chunkInitThread)
 
 
@@ -359,9 +376,10 @@ main :: proc() {
 					gs.LastLifeTick = time.tick_now()
 				}
 			}
-
+			camera.Camera_assert(&camera.curr)
 			game_render(
 				&camera.curr,
+				userInfoFileHandle,
 				&inventory,
 				mouseX,
 				mouseY,
@@ -380,6 +398,7 @@ main :: proc() {
 }
 game_render :: proc(
 	currCamera: ^camera.Camera,
+	userInfoFileHandle: ^os.File,
 	inventory: ^Inventory,
 	mouseX, mouseY: f32,
 	leftClickIsHeldThisFrame, pressedRightClickThisFrame: bool,
@@ -389,6 +408,17 @@ game_render :: proc(
 		uiPipeline:     ^vkh.PipelineData,
 	},
 ) {
+	assert(currCamera != nil)
+	assert(userInfoFileHandle != nil)
+	assert(inventory != nil)
+	assert(renderData.highlightSpere != nil)
+	assert(renderData.pointPipeline != nil)
+	assert(renderData.uiPipeline != nil)
+
+	defer user_info_frame_end_store(
+		userInfoFileHandle,
+		&{inventoryData = inventory.data, currCamera = currCamera^},
+	)
 	camera.camera_process_keyboard_movement(currCamera)
 
 	chunks_frame_update(currCamera)
