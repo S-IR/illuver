@@ -35,6 +35,9 @@ user_info_realm_init :: proc(
 		userInfoFileHandle, err = os.open(path, {.Read, .Write})
 		ensure(err == nil)
 
+		if DEBUG_MODE_IGNORE_SAVE {
+			return userInfoFileHandle, {}, false
+		}
 		fileSize: i64
 		fileSize, err = os.file_size(userInfoFileHandle)
 		ensure(err == nil)
