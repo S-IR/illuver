@@ -23,7 +23,7 @@ chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool,
 
 	for x in 0 ..< CHUNKS_PER_DIRECTION {
 		for z in 0 ..< CHUNKS_PER_DIRECTION {
-			chunk := &Chunks[x][z]
+			chunk := &RenderedChunks[x][z]
 			minF32 := [2]f32{f32(chunk.pos[0]), f32(chunk.pos[1])}
 			maxF32 := [2]f32{f32(chunk.pos[0] + CHUNK_STRIDE), f32(chunk.pos[1] + CHUNK_STRIDE)}
 
@@ -50,8 +50,8 @@ chunks_frame_update :: proc(c: ^camera.Camera) {
 
 	for x in 0 ..< CHUNKS_PER_DIRECTION {
 		for z in 0 ..< CHUNKS_PER_DIRECTION {
-			if Chunks[x][z].dirty {
-				Chunks[x][z].dirty = false
+			if RenderedChunks[x][z].dirty {
+				RenderedChunks[x][z].dirty = false
 				chunk_update_add_thread(x, z)
 			}
 		}
@@ -63,7 +63,8 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 	tracy.Zone()
 
 	xzOfCurrentCenterChunk := int2{i32(c.pos.x), i32(c.pos.z)} / CHUNK_STRIDE
-	xzOfPrevCenterChunk := Chunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX].pos / CHUNK_STRIDE
+	xzOfPrevCenterChunk :=
+		RenderedChunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX].pos / CHUNK_STRIDE
 	if xzOfCurrentCenterChunk == xzOfPrevCenterChunk do return
 	delta := xzOfCurrentCenterChunk - xzOfPrevCenterChunk
 	half := CHUNKS_PER_DIRECTION / 2
@@ -74,14 +75,14 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			if delta.x > 0 {
 				for x in 0 ..< CHUNKS_PER_DIRECTION - 1 {
 					for z in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x + 1][z].buffers
-						Chunks[x][z] = Chunks[x + 1][z]
-						Chunks[x][z].buffers, Chunks[x + 1][z].buffers =
+						firstBuffers := RenderedChunks[x][z].buffers
+						secondBuffers := RenderedChunks[x + 1][z].buffers
+						RenderedChunks[x][z] = RenderedChunks[x + 1][z]
+						RenderedChunks[x][z].buffers, RenderedChunks[x + 1][z].buffers =
 							secondBuffers, firstBuffers
-						Chunks[x + 1][z].points = {}
-						Chunks[x + 1][z].arena = {}
-						Chunks[x + 1][z].alloc = {}
+						RenderedChunks[x + 1][z].points = {}
+						RenderedChunks[x + 1][z].arena = {}
+						RenderedChunks[x + 1][z].alloc = {}
 					}
 				}
 				for z in 0 ..< CHUNKS_PER_DIRECTION {
@@ -96,15 +97,15 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			} else {
 				for x := CHUNKS_PER_DIRECTION - 1; x > 0; x -= 1 {
 					for z in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x - 1][z].buffers
-						Chunks[x][z] = Chunks[x - 1][z]
-						Chunks[x][z].buffers, Chunks[x - 1][z].buffers =
+						firstBuffers := RenderedChunks[x][z].buffers
+						secondBuffers := RenderedChunks[x - 1][z].buffers
+						RenderedChunks[x][z] = RenderedChunks[x - 1][z]
+						RenderedChunks[x][z].buffers, RenderedChunks[x - 1][z].buffers =
 							secondBuffers, firstBuffers
 
-						Chunks[x - 1][z].points = {}
-						Chunks[x - 1][z].arena = {}
-						Chunks[x - 1][z].alloc = {}
+						RenderedChunks[x - 1][z].points = {}
+						RenderedChunks[x - 1][z].arena = {}
+						RenderedChunks[x - 1][z].alloc = {}
 					}
 				}
 				for z in 0 ..< CHUNKS_PER_DIRECTION {
@@ -126,15 +127,15 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			if delta[1] > 0 {
 				for z in 0 ..< CHUNKS_PER_DIRECTION - 1 {
 					for x in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x][z + 1].buffers
-						Chunks[x][z] = Chunks[x][z + 1]
-						Chunks[x][z].buffers, Chunks[x][z + 1].buffers =
+						firstBuffers := RenderedChunks[x][z].buffers
+						secondBuffers := RenderedChunks[x][z + 1].buffers
+						RenderedChunks[x][z] = RenderedChunks[x][z + 1]
+						RenderedChunks[x][z].buffers, RenderedChunks[x][z + 1].buffers =
 							secondBuffers, firstBuffers
 
-						Chunks[x][z + 1].points = {}
-						Chunks[x][z + 1].arena = {}
-						Chunks[x][z + 1].alloc = {}
+						RenderedChunks[x][z + 1].points = {}
+						RenderedChunks[x][z + 1].arena = {}
+						RenderedChunks[x][z + 1].alloc = {}
 					}
 				}
 				for x in 0 ..< CHUNKS_PER_DIRECTION {
@@ -149,15 +150,15 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			} else {
 				for z := CHUNKS_PER_DIRECTION - 1; z > 0; z -= 1 {
 					for x in 0 ..< CHUNKS_PER_DIRECTION {
-						firstBuffers := Chunks[x][z].buffers
-						secondBuffers := Chunks[x][z - 1].buffers
-						Chunks[x][z] = Chunks[x][z - 1]
-						Chunks[x][z].buffers, Chunks[x][z - 1].buffers =
+						firstBuffers := RenderedChunks[x][z].buffers
+						secondBuffers := RenderedChunks[x][z - 1].buffers
+						RenderedChunks[x][z] = RenderedChunks[x][z - 1]
+						RenderedChunks[x][z].buffers, RenderedChunks[x][z - 1].buffers =
 							secondBuffers, firstBuffers
 
-						Chunks[x][z - 1].points = {}
-						Chunks[x][z - 1].arena = {}
-						Chunks[x][z - 1].alloc = {}
+						RenderedChunks[x][z - 1].points = {}
+						RenderedChunks[x][z - 1].arena = {}
+						RenderedChunks[x][z - 1].alloc = {}
 					}
 				}
 				for x in 0 ..< CHUNKS_PER_DIRECTION {
@@ -224,7 +225,7 @@ get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) 
 		i32(math.floor(f32(worldCoordXYZ.z) / CHUNK_STRIDE)),
 	}
 
-	centerChunk := Chunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX]
+	centerChunk := RenderedChunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX]
 	centerChunkCoord := centerChunk.pos / CHUNK_STRIDE
 
 	arrayIndex := [2]i32 {
@@ -237,7 +238,7 @@ get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) 
 	if arrayIndex.x < 0 || arrayIndex.x >= CHUNKS_PER_DIRECTION do return 0
 	if arrayIndex.y < 0 || arrayIndex.y >= CHUNKS_PER_DIRECTION do return 0
 
-	chunk := Chunks[arrayIndex.x][arrayIndex.y]
+	chunk := RenderedChunks[arrayIndex.x][arrayIndex.y]
 
 	localXYZ := [3]i32 {
 		worldCoordXYZ.x - chunk.pos.x,

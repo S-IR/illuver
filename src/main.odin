@@ -58,7 +58,7 @@ when ODIN_DEBUG && ENABLE_SPALL {
 }
 TRACY_ENABLE :: true
 
-
+DEBUG_MODE_IGNORE_SAVE :: true && ODIN_DEBUG
 main :: proc() {
 
 	when TRACY_ENABLE {
@@ -200,28 +200,21 @@ main :: proc() {
 	mouseX, mouseY: f32
 
 	vkh.loader_command_buffer_wait_and_destroy(loadCb, fence)
-	gs.CurrGameScreen = .MainMenu
+	gs.CurrGameScreen = .Loading
 
 	prevLeftClick: bool
 	chunkInitThread := thread.create(chunks_init_worker_thread)
 	when ODIN_DEBUG {
-		// defer {
-		// 	if .Started in chunkInitThread.flags {
-		// 		thread.join(chunkInitThread)
-
-		// 		if chunkInitThread.data != nil do free(chunkInitThread.data)
-		// 	}
-		// }
-		defer thread.destroy(chunkInitThread)
+		defer {
+			thread.join(chunkInitThread)
+			thread.destroy(chunkInitThread)
+		}
 
 	}
 
 	chunks_init_worker_thread :: proc(t: ^thread.Thread) {
-		if t.data == nil do return
 		chunks_destroy()
 
-		seedToStart := ((^u64)(t.data))^
-		gs.seed = seedToStart
 
 		camera.curr = camera.Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
 		chunks_init(&camera.curr)
@@ -331,9 +324,8 @@ main :: proc() {
 			if .Started not_in chunkInitThread.flags {
 				if (chunkInitThread.data != nil) do free(chunkInitThread.data)
 
-				newSeed := new(u64, context.allocator)
-				newSeed^ = gs.seed
-				chunkInitThread.data = newSeed
+				newSeed := gs.seed
+				chunkInitThread.data = &newSeed
 				thread.start(chunkInitThread)
 
 

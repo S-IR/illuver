@@ -3,6 +3,7 @@ import "../modules/tracy"
 import "../modules/vma"
 import "algorithms"
 import "camera"
+import "core:container/lru"
 import "core:container/small_array"
 import "core:fmt"
 import "core:math"
@@ -13,14 +14,15 @@ import "core:mem"
 import "core:mem/virtual"
 import vmem "core:mem/virtual"
 import "core:os"
+import "core:path/filepath"
 import "core:prof/spall"
 import "core:simd"
 import "core:sync"
 import "core:thread"
+import "core:time"
 import "gs"
 import vk "vendor:vulkan"
 import "vkh"
-
 int3 :: [3]i32
 int2 :: [2]i32
 
@@ -44,10 +46,11 @@ CUBES_PER_X_DIR: i32 : VERTS_PER_X_DIR - 1
 CUBES_PER_Y_DIR: i32 : VERTS_PER_Y_DIR - 1
 CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 
+CHUNK_HEIGHTMAP_SIZE :: VERTS_PER_X_DIR * VERTS_PER_Z_DIR
 NUM_WORKER_THREADS := 4
 Chunk :: struct {
 	points:        [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
-	heightMap:     [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]i32,
+	heightMap:     [CHUNK_HEIGHTMAP_SIZE]i32,
 	buffers:       struct {
 		pointsBuffer: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
 		indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
@@ -71,7 +74,7 @@ Chunk :: struct {
 CHUNKS_PER_DIRECTION :: 5
 
 ENERGY_TICKING_DIRECTION_LEN :: CHUNKS_PER_DIRECTION
-Chunks := [CHUNKS_PER_DIRECTION][CHUNKS_PER_DIRECTION]Chunk{}
+RenderedChunks := [CHUNKS_PER_DIRECTION][CHUNKS_PER_DIRECTION]Chunk{}
 
 
 ChunkPrevEnergyCache: [dynamic]u16
@@ -96,6 +99,8 @@ chunks_init :: proc(c: ^camera.Camera) {
 	chunkJobQueue = make([dynamic]ChunkJob, WorldAllocator)
 	chunkWorkerStates = make([dynamic]ChunkWorkerState, gs.NUM_CORES - 1, WorldAllocator)
 	chunkWorkerThreads = make([dynamic]^thread.Thread, gs.NUM_CORES - 1, WorldAllocator)
+	lru.init(&IRRFCache, MAX_IRRFS_IN_MEMORY, WorldAllocator, WorldAllocator)
+	IRRFCache.on_remove = irrf_cache_on_remove
 
 	for &t, i in chunkWorkerThreads {
 		idx := new(int, WorldAllocator)
@@ -119,7 +124,7 @@ chunks_init :: proc(c: ^camera.Camera) {
 	}
 	sync.wait(&chunkWorkersWG)
 
-	ChunkAtTheCenter = Chunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX].pos
+	ChunkAtTheCenter = RenderedChunks[CHUNK_MIDDLE_X_INDEX][CHUNK_MIDDLE_Z_INDEX].pos
 
 	ChunkPrevEnergyCache = make(
 		[dynamic]u16,
@@ -133,7 +138,7 @@ energy_tick :: proc(energyTickType: bit_set[EnergyType]) {
 
 
 	mem.zero(raw_data(ChunkPrevEnergyCache), size_of(ChunkPrevEnergyCache))
-	for &chunkRow, x in Chunks {
+	for &chunkRow, x in RenderedChunks {
 		for &chunk, z in chunkRow {
 			start := index_into_energy_cache(x, z)
 			// ensure((start + int(MAX_POINTS)) < len(ChunkPrevEnergyCache))
@@ -152,7 +157,7 @@ energy_tick :: proc(energyTickType: bit_set[EnergyType]) {
 		}
 	}
 
-	for &chunkRow, x in Chunks {
+	for &chunkRow, x in RenderedChunks {
 		for &chunk, z in chunkRow {
 			chunk_energy_tick_add_thread(x, z, energyTickType)
 		}
@@ -178,14 +183,14 @@ MAX_COLORS :: MAX_INDICES
 INDEX_TYPE_USED_IN_CHUNKS :: u32
 
 when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
-	chunk_init :: VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_chunk_init
+	render_chunk_init :: VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_chunk_init
 
 	VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_chunk_init :: proc(
 		xIdx, zIdx: int,
 		pos: int2,
 		state: ChunkWorkerState,
 	) {
-		chunk := &Chunks[xIdx][zIdx]
+		chunk := &RenderedChunks[xIdx][zIdx]
 		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 			if chunk.buffers.pointsBuffer[i].alloc != {} do continue
 			assert(chunk.buffers.indices[i].buffer == {})
@@ -437,7 +442,12 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	chunk_init :: proc(state: ^ChunkWorkerState) {
 		tracy.Zone()
 		pos := state.pos
-		chunk := &Chunks[state.xIdx][state.zIdx]
+		chunk := &RenderedChunks[state.xIdx][state.zIdx]
+		chunk.pos = pos
+
+		assert(chunk.pos[0] % CHUNK_STRIDE == 0)
+		assert(chunk.pos[1] % CHUNK_STRIDE == 0)
+
 		{
 			tracy.Zone()
 			for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
@@ -491,29 +501,35 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 			}
 		}
 
-		allocZoneCtx := tracy.ZoneBegin(true, tracy.TRACY_CALLSTACK)
 		if chunk.alloc == {} {
 			chunk.alloc = virtual.arena_allocator(&chunk.arena)
 		} else {
 			free_all(chunk.alloc)
 		}
+		state.vertexMapper = {}
 
 
-		chunk.pos = pos
-		tracy.ZoneEnd(allocZoneCtx)
+		gottenDataFromIrrf :=
+			false when DEBUG_MODE_IGNORE_SAVE else irrf_get_chunk(
+				pos,
+				&chunk.points,
+				&chunk.heightMap,
+			)
 
-		posXF64 := f64(pos[0])
-		posZF64 := f64(pos[1])
-		chunkXYZ := float3{f32(pos[0]), 0, f32(pos[1])}
-		chunkXYZI32 := [3]i32{i32(pos[0]), 0, i32(pos[1])}
 
 		// chunkXSimd := #simd[4]f64{posXF64, posXF64, posXF64, posXF64}
 		// chunkZSimd := #simd[4]f64{posZF64, posZF64, posZF64, posZF64}
 
 		// isCrystalblooomArr := [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]bool{}
-		state.vertexMapper = {}
-		{
+		if !gottenDataFromIrrf {
+			defer irrf_set_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
 			tracy.Zone()
+
+			posXF64 := f64(pos[0])
+			posZF64 := f64(pos[1])
+			chunkXYZ := float3{f32(pos[0]), 0, f32(pos[1])}
+			chunkXYZI32 := [3]i32{i32(pos[0]), 0, i32(pos[1])}
+
 			BIOME_THRESHOLD :: 20
 			for x: i32 = 0; x < VERTS_PER_X_DIR; x += 1 {
 				worldX := pos[0] + x
@@ -1110,7 +1126,7 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 	fx := f32(h & 0xFFFF) * (1.0 / 65536.0) - 0.5
 	fy := f32((h >> 16) & 0xFFFF) * (1.0 / 65536.0) - 0.5
 	fz := f32((h >> 24) & 0xFF) * (1.0 / 256.0) - 0.5
-	return {fx, fy, fz}
+	return {fx, fy, fz} / 2
 }
 
 
@@ -1141,10 +1157,10 @@ chunks_draw :: proc(
 		1,
 		&vk.Rect2D{extent = {width = gs.screenWidth, height = gs.screenHeight}},
 	)
-	for x in 0 ..< len(Chunks) {
-		for y in 0 ..< len(Chunks[0]) {
+	for x in 0 ..< len(RenderedChunks) {
+		for y in 0 ..< len(RenderedChunks[0]) {
 
-			chunk := &Chunks[x][y]
+			chunk := &RenderedChunks[x][y]
 			// if chunk.pos != {0, 0} do continue
 			if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
 			assert(chunk.totalIndices > 0)
@@ -1215,7 +1231,7 @@ chunks_destroy :: proc() {
 		thread.destroy(t)
 	}
 
-	for &chunkX in Chunks {
+	for &chunkX in RenderedChunks {
 		for &chunk in chunkX {
 			chunk_destroy(&chunk)
 		}

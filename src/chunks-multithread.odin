@@ -69,7 +69,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 		state.zIdx = job.zIdx
 		state.pos = job.pos
 
-		chunk := &Chunks[state.xIdx][state.zIdx]
+		chunk := &RenderedChunks[state.xIdx][state.zIdx]
 		jobTypeStr, _ := fmt.enum_value_to_string(job.type)
 		sync.mutex_lock(&chunk.mutex)
 
@@ -135,6 +135,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 					chunk.heightMap[heightMapIdx] = v.y + MIN_Y
 				}
 			}
+			irrf_set_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
 			chunk_create_gpu_geometry(chunk, state)
 		}
 		sync.mutex_unlock(&chunk.mutex)
@@ -218,12 +219,12 @@ chunk_init_add_thread :: proc(xIdx, zIdx: int, pos: [2]i32) {
 	sync.sema_post(&chunkJobSema)
 }
 chunk_update_add_thread :: proc(xIdx, zIdx: int) {
-	pos := Chunks[xIdx][zIdx].pos
+	pos := RenderedChunks[xIdx][zIdx].pos
 
 	job := ChunkJob {
 		xIdx = xIdx,
 		zIdx = zIdx,
-		pos  = Chunks[xIdx][zIdx].pos,
+		pos  = RenderedChunks[xIdx][zIdx].pos,
 		type = UpdateJob{},
 	}
 	chunk_send_job(job)
@@ -234,7 +235,7 @@ chunk_point_edit_add_thread :: proc(xIdx, zIdx: int, indexX, indexY, indexZ: i32
 	job := ChunkJob {
 		xIdx = xIdx,
 		zIdx = zIdx,
-		pos = Chunks[xIdx][zIdx].pos,
+		pos = RenderedChunks[xIdx][zIdx].pos,
 		type = EditUpdateJob{x = indexX, y = indexY, z = indexZ, newPointType = newType},
 	}
 	chunk_send_job(job)
@@ -244,7 +245,7 @@ chunk_energy_tick_add_thread :: proc(xIdx, zIdx: int, energyTickType: bit_set[En
 	job := ChunkJob {
 		xIdx = xIdx,
 		zIdx = zIdx,
-		pos = Chunks[xIdx][zIdx].pos,
+		pos = RenderedChunks[xIdx][zIdx].pos,
 		type = EnergyTickJob{energyTickType = energyTickType},
 	}
 
