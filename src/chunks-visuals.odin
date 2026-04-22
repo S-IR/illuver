@@ -49,21 +49,29 @@ CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 CHUNK_HEIGHTMAP_SIZE :: VERTS_PER_X_DIR * VERTS_PER_Z_DIR
 NUM_WORKER_THREADS := 4
 Chunk :: struct {
-	points:        [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
-	heightMap:     [CHUNK_HEIGHTMAP_SIZE]i32,
-	buffers:       struct {
-		pointsBuffer: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
-		indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
-		colors:       [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
+	points:            [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
+	heightMap:         [CHUNK_HEIGHTMAP_SIZE]i32,
+	buffers:           struct {
+		vertices: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
+		// indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
+		colors:   [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
+		compute:  struct {
+			pointsInput:     vkh.VkBufferPoolElem, // u16 input (uploaded when dirty)
+			counters:        vkh.VkBufferPoolElem, // atomic counters (3x u32)
+			uniform:         vkh.VkBufferPoolElem,
+			stagingVertices: vkh.VkBufferPoolElem,
+			stagingColors:   vkh.VkBufferPoolElem,
+		},
 	},
-	pos:           int2,
-	pendingUpload: [vkh.MAX_FRAMES_IN_FLIGHT]b32,
-	mutex:         sync.Mutex,
-	totalPoints:   u32,
-	totalIndices:  u32,
-	arena:         virtual.Arena,
-	alloc:         mem.Allocator,
-	dirty:         bool,
+	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
+	pos:               int2,
+	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
+	mutex:             sync.Mutex,
+	totalPoints:       u32,
+	totalTriangles:    u32,
+	arena:             virtual.Arena,
+	alloc:             mem.Allocator,
+	dirty:             bool,
 }
 
 
@@ -102,14 +110,51 @@ chunks_init :: proc(c: ^camera.Camera) {
 	lru.init(&IRRFCache, MAX_IRRFS_IN_MEMORY, WorldAllocator, WorldAllocator)
 	IRRFCache.on_remove = irrf_cache_on_remove
 
-	for &t, i in chunkWorkerThreads {
+	for i in 0 ..< gs.NUM_CORES - 1 {
+
+		vkh.chk(
+			vk.CreateCommandPool(
+				vkh.device,
+				&{
+					sType = .COMMAND_POOL_CREATE_INFO,
+					flags = {.RESET_COMMAND_BUFFER},
+					queueFamilyIndex = vkh.computeQueueFamilyIndex,
+				},
+				nil,
+				&chunkWorkerStates[i].computeCommandPool,
+			),
+		)
+
+
+		vkh.chk(
+			vk.AllocateCommandBuffers(
+				vkh.device,
+				&vk.CommandBufferAllocateInfo {
+					sType = .COMMAND_BUFFER_ALLOCATE_INFO,
+					commandPool = chunkWorkerStates[i].computeCommandPool,
+					level = .PRIMARY,
+					commandBufferCount = 1,
+				},
+				&chunkWorkerStates[i].computeCB,
+			),
+		)
+
+		vk.CreateFence(
+			vkh.device,
+			&vk.FenceCreateInfo{sType = .FENCE_CREATE_INFO, flags = {.SIGNALED}},
+			nil,
+			&chunkWorkerStates[i].computeFence,
+		)
+
+	}
+	for i in 0 ..< gs.NUM_CORES - 1 {
 		idx := new(int, WorldAllocator)
 		idx^ = i
-		t = thread.create(chunk_worker_thread)
+		t := thread.create(chunk_worker_thread)
 		t.data = idx
+		chunkWorkerThreads[i] = t
 		thread.start(t)
 	}
-
 
 	for x in 0 ..< CHUNKS_PER_DIRECTION {
 		for z in 0 ..< CHUNKS_PER_DIRECTION {
@@ -192,7 +237,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	) {
 		chunk := &RenderedChunks[xIdx][zIdx]
 		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-			if chunk.buffers.pointsBuffer[i].alloc != {} do continue
+			if chunk.buffers.vertices[i].alloc != {} do continue
 			assert(chunk.buffers.indices[i].buffer == {})
 			assert(chunk.buffers.colors[i].buffer == {})
 
@@ -201,12 +246,12 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 					vkh.allocator,
 					{
 						sType = .BUFFER_CREATE_INFO,
-						size = vk.DeviceSize(MAX_POINTS * size_of([3]f32)),
+						size = vk.DeviceSize(3 * MAX_POINTS * size_of([3]f32)),
 						usage = {.VERTEX_BUFFER},
 					},
 					{flags = {.Host_Access_Sequential_Write, .Mapped}, usage = .Auto},
-					&chunk.buffers.pointsBuffer[i].buffer,
-					&chunk.buffers.pointsBuffer[i].alloc,
+					&chunk.buffers.vertices[i].buffer,
+					&chunk.buffers.vertices[i].alloc,
 					nil,
 				),
 			)
@@ -397,21 +442,19 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		chunk.totalIndices = u32(staticIndicesLen)
 
 		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-			assert(chunk.buffers.pointsBuffer[i].alloc != {})
+			assert(chunk.buffers.vertices[i].alloc != {})
 			assert(chunk.buffers.indices[i].alloc != {})
 			assert(chunk.buffers.colors[i].alloc != {})
 
 
 			vertBufferPtr: rawptr
-			vkh.chk(
-				vma.map_memory(vkh.allocator, chunk.buffers.pointsBuffer[i].alloc, &vertBufferPtr),
-			)
+			vkh.chk(vma.map_memory(vkh.allocator, chunk.buffers.vertices[i].alloc, &vertBufferPtr))
 			mem.copy(
 				vertBufferPtr,
 				raw_data(staticVisiblePoints[0:staticVisiblePointsLen]),
 				staticVisiblePointsLen * size_of(staticVisiblePoints[0]),
 			)
-			vma.unmap_memory(vkh.allocator, chunk.buffers.pointsBuffer[i].alloc)
+			vma.unmap_memory(vkh.allocator, chunk.buffers.vertices[i].alloc)
 
 			index := chunk.buffers.indices[i]
 
@@ -440,6 +483,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	}
 } else {
 	chunk_init :: proc(state: ^ChunkWorkerState) {
+
 		tracy.Zone()
 		pos := state.pos
 		chunk := &RenderedChunks[state.xIdx][state.zIdx]
@@ -451,8 +495,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		{
 			tracy.Zone()
 			for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-				if chunk.buffers.pointsBuffer[i].buffer != {} do continue
-				assert(chunk.buffers.indices[i].buffer == {})
+				if chunk.buffers.vertices[i].buffer != {} do continue
 				assert(chunk.buffers.colors[i].buffer == {})
 
 				vkh.chk(
@@ -460,29 +503,25 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						vkh.allocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
-							size = vk.DeviceSize(MAX_POINTS * size_of([3]f32)),
-							usage = {.VERTEX_BUFFER},
+							size = vk.DeviceSize(MAX_INDICES * size_of([3]f32)),
+							usage = {
+								.VERTEX_BUFFER,
+								.TRANSFER_DST,
+								.TRANSFER_SRC,
+								.STORAGE_BUFFER,
+							},
 						},
-						{flags = {.Host_Access_Sequential_Write, .Mapped}, usage = .Auto},
-						&chunk.buffers.pointsBuffer[i].buffer,
-						&chunk.buffers.pointsBuffer[i].alloc,
-						nil,
-					),
-				)
-				vkh.chk(
-					vma.create_buffer(
-						vkh.allocator,
 						{
-							sType = .BUFFER_CREATE_INFO,
-							size = vk.DeviceSize(MAX_INDICES * size_of(INDEX_TYPE_USED_IN_CHUNKS)),
-							usage = {.INDEX_BUFFER},
+							flags = {.Host_Access_Sequential_Write, .Mapped},
+							required_flags = {.HOST_VISIBLE},
+							usage = .Auto,
 						},
-						{flags = {.Host_Access_Sequential_Write, .Mapped}, usage = .Auto},
-						&chunk.buffers.indices[i].buffer,
-						&chunk.buffers.indices[i].alloc,
+						&chunk.buffers.vertices[i].buffer,
+						&chunk.buffers.vertices[i].alloc,
 						nil,
 					),
 				)
+
 
 				vkh.chk(
 					vma.create_buffer(
@@ -490,9 +529,13 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						{
 							sType = .BUFFER_CREATE_INFO,
 							size = vk.DeviceSize(MAX_COLORS * size_of([4]f32)),
-							usage = {.STORAGE_BUFFER},
+							usage = {.STORAGE_BUFFER, .TRANSFER_DST, .TRANSFER_SRC},
 						},
-						{flags = {.Host_Access_Sequential_Write, .Mapped}, usage = .Auto},
+						{
+							required_flags = {.HOST_VISIBLE},
+							flags = {.Host_Access_Sequential_Write, .Mapped},
+							usage = .Auto,
+						},
 						&chunk.buffers.colors[i].buffer,
 						&chunk.buffers.colors[i].alloc,
 						nil,
@@ -500,13 +543,13 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				)
 			}
 		}
+		chunk_geometry_calc_buffers_create(chunk)
 
 		if chunk.alloc == {} {
 			chunk.alloc = virtual.arena_allocator(&chunk.arena)
 		} else {
 			free_all(chunk.alloc)
 		}
-		state.vertexMapper = {}
 
 
 		gottenDataFromIrrf :=
@@ -590,532 +633,105 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 		// 	}
 
 		// }
-		chunk_create_gpu_geometry(chunk, state)
+		chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
 
 	}
-	INVALID :: u32(0xFFFFFFFF)
+	U32_INVALID :: u32(0xFFFFFFFF)
 
-	chunk_create_gpu_geometry :: proc(chunk: ^Chunk, state: ^ChunkWorkerState) {
-		pos := state.pos
-
-		staticVisiblePointsLen: INDEX_TYPE_USED_IN_CHUNKS = 0
-		staticIndicesLen: int = 0
-		staticColorsLen: int = 0
-
-		visible := &state.visiblePoints
-		indices := &state.indices
-		colors := &state.colors
-
-
-		points := &chunk.points
-		mapper := &state.vertexMapper
-
-		{
-			tracy.Zone()
-			mem.set(mapper, 0xFF, len(mapper) * size_of(mapper[0]))
-		}
-
-		airSimd := #simd[8]u16 {
-			u16(PointType.Air),
-			u16(PointType.Air),
-			u16(PointType.Air),
-			u16(PointType.Air),
-			u16(PointType.Air),
-			u16(PointType.Air),
-			u16(PointType.Air),
-			u16(PointType.Air),
-		}
-
-		// staticBarycentricsLen: int = 0
-		// worldBase := [3]i32{state.pos.x, 0, state.pos[1]}
-		#no_bounds_check {
-			tracy.Zone()
-
-
-			for x: i32 = 0; x < VERTS_PER_X_DIR - 1; x += 1 {
-				worldX := pos[0] + x
-				isEdgeX := x == 0 || x == VERTS_PER_X_DIR - 2
-				for z: i32 = 0; z < VERTS_PER_Z_DIR - 1; z += 1 {
-
-					isEdgeZ := z == 0 || z == VERTS_PER_Z_DIR - 2
-					worldZ := pos[1] + z
-					height := chunk.heightMap[x * VERTS_PER_Z_DIR + z]
-
-
-					for y: i32 = 0; y <= height - MIN_Y; y += 1 {
-						baseIndex := x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
-						pointVal := points[baseIndex]
-						if pointVal == 0 do continue
-
-						isEdgeY := y == 0 || y == height - MIN_Y - 1
-						isChunkEdge := isEdgeX || isEdgeY || isEdgeZ
-						yCoord := y + MIN_Y
-						base := [3]i32{x, y, z}
-						worldBase := [3]i32{worldX, yCoord, worldZ}
-						// pointTypeSimd := #simd[8]u16 {
-						// 	u16(pointType),
-						// 	u16(pointType),
-						// 	u16(pointType),
-						// 	u16(pointType),
-						// 	u16(pointType),
-						// 	u16(pointType),
-						// 	u16(pointType),
-						// 	u16(pointType),
-						// }
-						if !isChunkEdge {
-							isSurrounded := true
-							for p in pointsSimdNeighbors {
-								neighbourIndices := baseIndex + p
-								neighbour := #simd[8]u16 {
-									u16(points[simd.extract(neighbourIndices, 0)]),
-									u16(points[simd.extract(neighbourIndices, 1)]),
-									u16(points[simd.extract(neighbourIndices, 2)]),
-									u16(points[simd.extract(neighbourIndices, 3)]),
-									u16(points[simd.extract(neighbourIndices, 4)]),
-									u16(points[simd.extract(neighbourIndices, 5)]),
-									u16(points[simd.extract(neighbourIndices, 6)]),
-									u16(points[simd.extract(neighbourIndices, 7)]),
-								}
-								eqMask := simd.lanes_eq(neighbour, airSimd)
-								anyAir := simd.reduce_or(eqMask) != 0
-								if anyAir {
-									isSurrounded = false
-									break
-								}
-							}
-							isSurrounded &= points[baseIndex + pointsNeighbourLeftCoords] != 0
-							isSurrounded &= points[baseIndex + pointsNeighbourRightCoords] != 0
-							if isSurrounded do continue
-
-						}
-
-						// Inline neighbor point fetches
-						nx1 := x + 1; ny1 := y; nz1 := z
-						oneZeroZero :=
-							points[index_into_point_arrays(nx1, ny1, nz1)] if nx1 < VERTS_PER_X_DIR else 0
-
-						nx2 := x + 1; ny2 := y + 1; nz2 := z
-						oneOneZero :=
-							points[index_into_point_arrays(nx2, ny2, nz2)] if nx2 < VERTS_PER_X_DIR && ny2 < VERTS_PER_Y_DIR else 0
-
-						nx3 := x; ny3 := y + 1; nz3 := z
-						zeroOneZero :=
-							points[index_into_point_arrays(nx3, ny3, nz3)] if ny3 < VERTS_PER_Y_DIR else 0
-
-						nx4 := x; ny4 := y; nz4 := z + 1
-						zeroZeroOne :=
-							points[index_into_point_arrays(nx4, ny4, nz4)] if nz4 < VERTS_PER_Z_DIR else 0
-
-						nx5 := x; ny5 := y + 1; nz5 := z + 1
-						zeroOneOne :=
-							points[index_into_point_arrays(nx5, ny5, nz5)] if ny5 < VERTS_PER_Y_DIR && nz5 < VERTS_PER_Z_DIR else 0
-
-						nx6 := x + 1; ny6 := y; nz6 := z + 1
-						oneZeroOne :=
-							points[index_into_point_arrays(nx6, ny6, nz6)] if nx6 < VERTS_PER_X_DIR && nz6 < VERTS_PER_Z_DIR else 0
-
-
-						if pointVal != 0 && oneZeroZero != 0 && oneOneZero != 0 {
-							i0 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i1 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{1, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i2 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{1, 1, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							idx := staticIndicesLen
-							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
-							staticIndicesLen += 3
-							colors[staticColorsLen] = triangle_decide_color(
-								{pointVal, oneZeroZero, oneOneZero},
-							)
-							staticColorsLen += 1
-						}
-						if pointVal != 0 && oneOneZero != 0 && zeroOneZero != 0 {
-							i0 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i1 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{1, 1, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i2 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 1, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							idx := staticIndicesLen
-							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
-							staticIndicesLen += 3
-							colors[staticColorsLen] = triangle_decide_color(
-								{pointVal, oneOneZero, zeroOneZero},
-							)
-							staticColorsLen += 1
-						}
-						if pointVal != 0 && zeroZeroOne != 0 && zeroOneOne != 0 {
-							i0 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i1 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 1},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i2 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 1, 1},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							idx := staticIndicesLen
-							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
-							staticIndicesLen += 3
-							colors[staticColorsLen] = triangle_decide_color(
-								{pointVal, zeroZeroOne, zeroOneOne},
-							)
-							staticColorsLen += 1
-						}
-						if pointVal != 0 && zeroOneOne != 0 && zeroOneZero != 0 {
-							i0 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i1 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 1, 1},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i2 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 1, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							idx := staticIndicesLen
-							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
-							staticIndicesLen += 3
-							colors[staticColorsLen] = triangle_decide_color(
-								{pointVal, zeroOneOne, zeroOneZero},
-							)
-							staticColorsLen += 1
-						}
-						if pointVal != 0 && oneZeroZero != 0 && oneZeroOne != 0 {
-							i0 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i1 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{1, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i2 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{1, 0, 1},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							idx := staticIndicesLen
-							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
-							staticIndicesLen += 3
-							colors[staticColorsLen] = triangle_decide_color(
-								{pointVal, oneZeroZero, oneZeroOne},
-							)
-							staticColorsLen += 1
-						}
-						if pointVal != 0 && oneZeroOne != 0 && zeroZeroOne != 0 {
-							i0 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 0},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i1 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{1, 0, 1},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							i2 := geometry_process_vertex(
-								mapper[:],
-								worldBase,
-								base,
-								{0, 0, 1},
-								visible[:],
-								&staticVisiblePointsLen,
-								gs.seed,
-							)
-							idx := staticIndicesLen
-							indices[idx] = i0; indices[idx + 1] = i1; indices[idx + 2] = i2
-							staticIndicesLen += 3
-							colors[staticColorsLen] = triangle_decide_color(
-								{pointVal, oneZeroOne, zeroZeroOne},
-							)
-							staticColorsLen += 1
-						}
-
-					}
-				}
-			}}
-
-		assert(staticVisiblePointsLen > 0)
-		assert(staticIndicesLen > 0)
-		assert(staticColorsLen > 0)
-		assert(staticIndicesLen % 3 == 0)
-		assert(staticColorsLen * 3 == staticIndicesLen)
-
-
-		chunk.totalPoints = u32(staticVisiblePointsLen)
-		chunk.totalIndices = u32(staticIndicesLen)
-
-		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-			sync.sema_wait(&vkh.framesReady[i])
-			upload_to_buffer(
-				chunk,
-				state,
-				u32(i),
-				staticVisiblePointsLen,
-				staticIndicesLen,
-				staticColorsLen,
-			)
-			sync.sema_post(&vkh.framesReady[i])
-		}
-		upload_to_buffer :: proc(
-			chunk: ^Chunk,
-			state: ^ChunkWorkerState,
-			i: u32,
-			staticVisiblePointsLen: u32,
-			staticIndicesLen, staticColorsLen: int,
-		) {
-			assert(chunk.buffers.pointsBuffer[i].alloc != {})
-			assert(chunk.buffers.indices[i].alloc != {})
-			assert(chunk.buffers.colors[i].alloc != {})
-
-
-			vertBufferPtr: rawptr
-			vkh.chk(
-				vma.map_memory(vkh.allocator, chunk.buffers.pointsBuffer[i].alloc, &vertBufferPtr),
-			)
-			mem.copy(
-				vertBufferPtr,
-				raw_data(state.visiblePoints[0:staticVisiblePointsLen]),
-				int(staticVisiblePointsLen) * size_of(state.visiblePoints[0]),
-			)
-			vma.unmap_memory(vkh.allocator, chunk.buffers.pointsBuffer[i].alloc)
-
-
-			indexBufferPtr: rawptr
-			vkh.chk(vma.map_memory(vkh.allocator, chunk.buffers.indices[i].alloc, &indexBufferPtr))
-			mem.copy(
-				indexBufferPtr,
-				raw_data(state.indices[0:staticIndicesLen]),
-				staticIndicesLen * size_of(state.indices[0]),
-			)
-			vma.unmap_memory(vkh.allocator, chunk.buffers.indices[i].alloc)
-
-
-			colorBufferPtr: rawptr
-			vkh.chk(vma.map_memory(vkh.allocator, chunk.buffers.colors[i].alloc, &colorBufferPtr))
-			mem.copy(
-				colorBufferPtr,
-				raw_data(state.colors[0:staticColorsLen]),
-				staticColorsLen * size_of(state.colors[0]),
-			)
-			vma.unmap_memory(vkh.allocator, chunk.buffers.colors[i].alloc)
-		}
-	}
-	// for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-	// 	// A fence is "safe" if it's signaled OR if it hasn't been submitted yet
-	// 	// (which we know because the frame index hasn't wrapped past it)
-	// 	if vk.GetFenceStatus(vkh.vkDevice, vkh.vkFences[i]) == .SUCCESS {
-	// 		safeIndices[i] = true
-	// 	} else {
-	// 		append(&pendingFences, vkh.vkFences[i])
-	// 		append(&pendingIndices, i)
-	// 	}
-	// }
-
-
-	// {
-
-	// tracy.Zone()
-	// 	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-
-	// 		if vk.GetFenceStatus(vkh.vkDevice, vkh.vkFences[i]) != .NOT_READY {
-	// 			vk.WaitForFences(vkh.vkDevice, 1, &vkh.vkFences[i], true, max(u64))
-	// 		}
-
-	// 		// vk.ResetFences(vkh.vkDevice, 1, &vkh.vkFences[i])
-
-
-	// }
-	// }
-}
-
-
-geometry_process_vertex :: proc "contextless" (
-	mapper: []INDEX_TYPE_USED_IN_CHUNKS,
-	worldBase: [3]i32,
-	base: [3]i32,
-	offset: [3]i32,
-	vertexArr: [][3]f32,
-	vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
-	seed: u64,
-) -> INDEX_TYPE_USED_IN_CHUNKS {
-	#no_bounds_check {
-		idxVal :=
-			(base.x + offset.x) * VERT_STRIDE_X +
-			(base.y + offset.y) * VERT_STRIDE_Y +
-			(base.z + offset.z)
-		if mapper[idxVal] != INVALID {
-			return mapper[idxVal]
-		}
-		wx := worldBase.x + offset.x
-		wy := worldBase.y + offset.y
-		wz := worldBase.z + offset.z
-
-		vertexArr[vertexArrayLen^] = point_real_world_position({f32(wx), f32(wy), f32(wz)})
-		mapper[idxVal] = vertexArrayLen^
-		curr := vertexArrayLen^
-		vertexArrayLen^ += 1
-		return curr
-	}
-
-}
-get_point_type :: #force_inline proc "contextless" (
-	base: [3]i32,
-	offset: [3]i32,
-	points: []u16,
-) -> u16 {
-	finalCoord := base + offset
-
-	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return 0
-	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return 0
-	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return 0
-
-	index := index_into_point_arrays(finalCoord)
-	#no_bounds_check {
-		return points[index]
-	}
-}
-
-get_offset_point_type_bounds_checked :: proc(base: [3]i32, offset: [3]i32, points: []u16) -> u16 {
-	finalCoord := base + offset
-
-	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return 0
-	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return 0
-	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return 0
-
-	index := index_into_point_arrays(finalCoord)
-	return points[index]
-}
-get_or_create_mapper_idx :: proc "contextless" (
-	mapper: []INDEX_TYPE_USED_IN_CHUNKS,
-	worldCoord: [3]i32,
-	idx: [3]i32,
-	vertexArr: [][3]f32,
-	vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
-) -> INDEX_TYPE_USED_IN_CHUNKS {
-	// assert(len(mapper) > 0)
-	// assert(idx[0] >= 0 && idx[0] < VERTS_PER_X_DIR)
-	// assert(idx[1] >= 0 && idx[1] < VERTS_PER_Y_DIR)
-	// assert(idx[2] >= 0 && idx[2] < VERTS_PER_Z_DIR)
-	// assert(len(vertexArr) > 0)
-	// assert(vertexArrayLen != nil)
-
-	#no_bounds_check {
-		idxAsValue := index_into_point_arrays(idx)
-		if mapper[idxAsValue] != INVALID do return mapper[idxAsValue]
-		finalCoord := point_real_world_position(
-			[3]f32{f32(worldCoord.x), f32(worldCoord.y), f32(worldCoord.z)},
-		)
-		vertexArr[vertexArrayLen^] = finalCoord
-		mapper[idxAsValue] = vertexArrayLen^
-		currIdx := vertexArrayLen^
-		vertexArrayLen^ += 1
-		return currIdx
+	chunk_create_gpu_geometry :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, frameIndex: u32) {
+		chunk_generate_gpu(chunk, state, computeMeshPipeline)
+		chunk_copy_current_to_other_frames(chunk, state, frameIndex)
 
 	}
 
 }
+
+
+// geometry_process_vertex :: proc "contextless" (
+// 	mapper: []INDEX_TYPE_USED_IN_CHUNKS,
+// 	worldBase: [3]i32,
+// 	base: [3]i32,
+// 	offset: [3]i32,
+// 	vertexArr: [][3]f32,
+// 	vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
+// 	seed: u64,
+// ) -> INDEX_TYPE_USED_IN_CHUNKS {
+// 	#no_bounds_check {
+// 		idxVal :=
+// 			(base.x + offset.x) * VERT_STRIDE_X +
+// 			(base.y + offset.y) * VERT_STRIDE_Y +
+// 			(base.z + offset.z)
+// 		if mapper[idxVal] != U32_INVALID {
+// 			return mapper[idxVal]
+// 		}
+// 		wx := worldBase.x + offset.x
+// 		wy := worldBase.y + offset.y
+// 		wz := worldBase.z + offset.z
+
+// 		vertexArr[vertexArrayLen^] = point_real_world_position({f32(wx), f32(wy), f32(wz)})
+// 		mapper[idxVal] = vertexArrayLen^
+// 		curr := vertexArrayLen^
+// 		vertexArrayLen^ += 1
+// 		return curr
+// 	}
+
+// }
+// get_point_type :: #force_inline proc "contextless" (
+// 	base: [3]i32,
+// 	offset: [3]i32,
+// 	points: []u16,
+// ) -> u16 {
+// 	finalCoord := base + offset
+
+// 	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return 0
+// 	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return 0
+// 	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return 0
+
+// 	index := index_into_point_arrays(finalCoord)
+// 	#no_bounds_check {
+// 		return points[index]
+// 	}
+// }
+
+// get_offset_point_type_bounds_checked :: proc(base: [3]i32, offset: [3]i32, points: []u16) -> u16 {
+// 	finalCoord := base + offset
+
+// 	if finalCoord.x < 0 || finalCoord.x >= VERTS_PER_X_DIR do return 0
+// 	if finalCoord.y < 0 || finalCoord.y >= VERTS_PER_Y_DIR do return 0
+// 	if finalCoord.z < 0 || finalCoord.z >= VERTS_PER_Z_DIR do return 0
+
+// 	index := index_into_point_arrays(finalCoord)
+// 	return points[index]
+// }
+// get_or_create_mapper_idx :: proc "contextless" (
+// 	mapper: []INDEX_TYPE_USED_IN_CHUNKS,
+// 	worldCoord: [3]i32,
+// 	idx: [3]i32,
+// 	vertexArr: [][3]f32,
+// 	vertexArrayLen: ^INDEX_TYPE_USED_IN_CHUNKS,
+// ) -> INDEX_TYPE_USED_IN_CHUNKS {
+// 	// assert(len(mapper) > 0)
+// 	// assert(idx[0] >= 0 && idx[0] < VERTS_PER_X_DIR)
+// 	// assert(idx[1] >= 0 && idx[1] < VERTS_PER_Y_DIR)
+// 	// assert(idx[2] >= 0 && idx[2] < VERTS_PER_Z_DIR)
+// 	// assert(len(vertexArr) > 0)
+// 	// assert(vertexArrayLen != nil)
+
+// 	#no_bounds_check {
+// 		idxAsValue := index_into_point_arrays(idx)
+// 		if mapper[idxAsValue] != U32_INVALID do return mapper[idxAsValue]
+// 		finalCoord := point_real_world_position(
+// 			[3]f32{f32(worldCoord.x), f32(worldCoord.y), f32(worldCoord.z)},
+// 		)
+// 		vertexArr[vertexArrayLen^] = finalCoord
+// 		mapper[idxAsValue] = vertexArrayLen^
+// 		currIdx := vertexArrayLen^
+// 		vertexArrayLen^ += 1
+// 		return currIdx
+
+// 	}
+
+// }
 point_real_world_position :: #force_inline proc "contextless" (worldXYZ: [3]f32) -> [3]f32 {
 	// return worldXYZ
 	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), gs.seed)
@@ -1137,7 +753,7 @@ chunks_draw :: proc(
 	CameraUBOSize: vk.DeviceSize,
 	currCamera: ^camera.Camera,
 ) {
-	vk.CmdBindPipeline(cb, .GRAPHICS, p.graphicsPipeline)
+	vk.CmdBindPipeline(cb, .GRAPHICS, p.pipeline)
 	vk.CmdSetViewport(
 		cb,
 		0,
@@ -1163,18 +779,27 @@ chunks_draw :: proc(
 			chunk := &RenderedChunks[x][y]
 			// if chunk.pos != {0, 0} do continue
 			if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
-			assert(chunk.totalIndices > 0)
-			if chunk.totalIndices == 0 do continue
+			// assert(chunk.totalIndices > 0)
+			// if chunk.totalIndices == 0 do continue
 
-
-			assert(chunk.buffers.pointsBuffer[vkh.frameIndex].alloc != {})
-			vertexBuffer := chunk.buffers.pointsBuffer[vkh.frameIndex].buffer
+			if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
+				waitInfo := vk.SemaphoreWaitInfo {
+					sType          = .SEMAPHORE_WAIT_INFO,
+					semaphoreCount = 1,
+					pSemaphores    = &vkh.copyTimelineSemaphore,
+					pValues        = &chunk.copyTimelineValue[vkh.frameIndex],
+				}
+				vk.WaitSemaphores(vkh.device, &waitInfo, max(u64))
+				chunk.copyTimelineValue[vkh.frameIndex] = 0
+			}
+			assert(chunk.buffers.vertices[vkh.frameIndex].alloc != {})
+			vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
 			vertexOffset := vk.DeviceSize(0)
 
 			vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
 			#assert(INDEX_TYPE_USED_IN_CHUNKS == u32)
 
-			vk.CmdBindIndexBuffer(cb, chunk.buffers.indices[vkh.frameIndex].buffer, 0, .UINT32)
+			// vk.CmdBindIndexBuffer(cb, chunk.buffers.indices[vkh.frameIndex].buffer, 0, .UINT32)
 
 
 			cameraInfo := vk.DescriptorBufferInfo {
@@ -1215,7 +840,7 @@ chunks_draw :: proc(
 				raw_data(writes[:]),
 			)
 
-			vk.CmdDrawIndexed(cb, chunk.totalIndices, 1, 0, 0, 0)
+			vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
 		}
 	}
 }
@@ -1237,6 +862,24 @@ chunks_destroy :: proc() {
 		}
 	}
 
+	for &workerState in chunkWorkerStates {
+		if workerState.computeCommandPool != {} {
+			if workerState.computeCB != {} {
+				vk.FreeCommandBuffers(
+					vkh.device,
+					workerState.computeCommandPool,
+					1,
+					&workerState.computeCB,
+				)
+			}
+			vk.DestroyCommandPool(vkh.device, workerState.computeCommandPool, nil)
+		}
+
+		if workerState.computeFence != {} {
+			vk.WaitForFences(vkh.device, 1, &workerState.computeFence, true, max(u64))
+			vk.DestroyFence(vkh.device, workerState.computeFence, nil)
+		}
+	}
 	vmem.arena_destroy(&WorldArena)
 
 
@@ -1245,22 +888,15 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 	assert(chunk != nil)
 
 	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-		if chunk.buffers.pointsBuffer[i].alloc != {} {
+		if chunk.buffers.vertices[i].alloc != {} {
 			vma.destroy_buffer(
 				vkh.allocator,
-				chunk.buffers.pointsBuffer[i].buffer,
-				chunk.buffers.pointsBuffer[i].alloc,
+				chunk.buffers.vertices[i].buffer,
+				chunk.buffers.vertices[i].alloc,
 			)
-			chunk.buffers.pointsBuffer[i] = {}
+			chunk.buffers.vertices[i] = {}
 		}
-		if chunk.buffers.indices[i].alloc != {} {
-			vma.destroy_buffer(
-				vkh.allocator,
-				chunk.buffers.indices[i].buffer,
-				chunk.buffers.indices[i].alloc,
-			)
-			chunk.buffers.indices[i] = {}
-		}
+
 		if chunk.buffers.colors[i].alloc != {} {
 			vma.destroy_buffer(
 				vkh.allocator,
@@ -1269,11 +905,14 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 			)
 			chunk.buffers.colors[i] = {}
 		}
+
 	}
+	chunk_geometry_calc_buffers_destroy(chunk)
+
 	chunk.buffers = {}
 
 	free_all(chunk.alloc)
 	chunk.pos = {0, 0}
 	chunk.totalPoints = 0
-	chunk.totalIndices = 0
+	chunk.totalTriangles = 0
 }

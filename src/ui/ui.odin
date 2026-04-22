@@ -224,7 +224,7 @@ init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 		layout              = p.layout,
 		subpass             = 0,
 	}
-	vkh.chk(vk.CreateGraphicsPipelines(vkh.device, 0, 1, &pipelineCi, nil, &p.graphicsPipeline))
+	vkh.chk(vk.CreateGraphicsPipelines(vkh.device, 0, 1, &pipelineCi, nil, &p.pipeline))
 	return p
 }
 frame_reset :: proc() {
@@ -252,7 +252,7 @@ render :: proc(cb: vk.CommandBuffer, uiP: vkh.PipelineData) {
 		1,
 		&vk.Rect2D{offset = {0, 0}, extent = {gs.screenWidth, gs.screenHeight}},
 	)
-	vk.CmdBindPipeline(cb, .GRAPHICS, uiP.graphicsPipeline)
+	vk.CmdBindPipeline(cb, .GRAPHICS, uiP.pipeline)
 	offset := vk.DeviceSize(0)
 	vkUIVertexBuffer := vkUIVertexBuffers[vkh.frameIndex].buffer
 	vkUIVertexAlloc := vkUIVertexBuffers[vkh.frameIndex].alloc
@@ -327,8 +327,8 @@ destroy :: proc(textP: vkh.PipelineData) {
 		}
 	}
 
-	if textP.graphicsPipeline != {} {
-		vk.DestroyPipeline(vkh.device, textP.graphicsPipeline, nil)
+	if textP.pipeline != {} {
+		vk.DestroyPipeline(vkh.device, textP.pipeline, nil)
 	}
 	if textP.layout != {} {
 		vk.DestroyPipelineLayout(vkh.device, textP.layout, nil)

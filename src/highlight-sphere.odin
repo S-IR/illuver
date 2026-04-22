@@ -240,7 +240,7 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 				},
 			},
 			nil,
-			&p.graphicsPipeline,
+			&p.pipeline,
 		),
 	)
 	return p
@@ -254,7 +254,7 @@ highlight_sphere_draw :: proc(
 	time: f32,
 ) {
 
-	vk.CmdBindPipeline(cb, .GRAPHICS, sphere.pipeline.graphicsPipeline)
+	vk.CmdBindPipeline(cb, .GRAPHICS, sphere.pipeline.pipeline)
 	vk.CmdSetViewport(
 		cb,
 		0,
@@ -341,8 +341,8 @@ highlight_sphere_destroy :: proc(sphere: ^HighlightSphere) {
 		vma.destroy_buffer(vkh.allocator, sphere.indexBuffer.buffer, sphere.indexBuffer.alloc)
 	}
 
-	if sphere.pipeline.graphicsPipeline != {} {
-		vk.DestroyPipeline(vkh.device, sphere.pipeline.graphicsPipeline, nil)
+	if sphere.pipeline.pipeline != {} {
+		vk.DestroyPipeline(vkh.device, sphere.pipeline.pipeline, nil)
 	}
 	if sphere.pipeline.layout != {} {
 		vk.DestroyPipelineLayout(vkh.device, sphere.pipeline.layout, nil)

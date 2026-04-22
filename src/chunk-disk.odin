@@ -1,4 +1,5 @@
 package main
+import "../modules/tracy"
 import "base:intrinsics"
 import "core:bufio"
 import "core:container/lru"
@@ -77,6 +78,7 @@ irrf_set_chunk :: proc(
 	points: ^[MAX_POINTS]u16,
 	heightmap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
 ) {
+	tracy.Zone()
 	assert(points != nil)
 	assert(heightmap != nil)
 	assert(pos[0] % CHUNK_STRIDE == 0)
@@ -148,7 +150,7 @@ irrf_set_chunk :: proc(
 
 
 		dataBytes := mem.slice_to_bytes(irrfFile.data[:])
-		compress_to_file(tempHandle, dataBytes)
+		irrf_compress_to_file(tempHandle, dataBytes)
 
 		if irrfFile.handle != nil {
 			err = os.close(irrfFile.handle)
@@ -168,6 +170,8 @@ irrf_get_chunk :: proc(
 ) -> (
 	wasInCache: bool,
 ) {
+	tracy.Zone()
+
 	assert(pos[0] % CHUNK_STRIDE == 0)
 	assert(pos[1] % CHUNK_STRIDE == 0)
 
@@ -244,7 +248,7 @@ irrf_get_chunk :: proc(
 irrf_cache_on_remove :: proc(key: [2]i32, value: InMemoryIRRF, user_data: rawptr) {
 	os.close(value.handle)
 }
-compress_to_file :: proc(handle: ^os.File, data: []byte) {
+irrf_compress_to_file :: proc(handle: ^os.File, data: []byte) {
 	bound := lz4.compressBound(i32(len(data)))
 	compressed := make([]byte, bound, context.temp_allocator)
 

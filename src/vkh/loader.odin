@@ -7,7 +7,7 @@ loader_command_buffer_create :: proc() -> (cb: vk.CommandBuffer, fence: vk.Fence
 			device,
 			&vk.CommandBufferAllocateInfo {
 				sType = .COMMAND_BUFFER_ALLOCATE_INFO,
-				commandPool = commandPool,
+				commandPool = drawCommandPool,
 				commandBufferCount = 1,
 			},
 			&cb,
@@ -33,7 +33,7 @@ loader_command_buffer_wait_and_destroy :: proc(cb: vk.CommandBuffer, fence: vk.F
 	tempFenceArr := [?]vk.Fence{fence}
 	chk(vk.WaitForFences(device, len(tempFenceArr), raw_data(tempFenceArr[:]), true, max(u64)))
 
-	vk.FreeCommandBuffers(device, commandPool, len(tempCbArr), raw_data(tempCbArr[:]))
+	vk.FreeCommandBuffers(device, drawCommandPool, len(tempCbArr), raw_data(tempCbArr[:]))
 	vk.DestroyFence(device, fence, nil)
 
 }

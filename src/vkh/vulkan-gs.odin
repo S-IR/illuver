@@ -20,8 +20,10 @@ GPUTexture :: struct {
 instance: vk.Instance
 physicalDevice: vk.PhysicalDevice
 
-graphicsQueueFamilyIndex: u32 = 0
-queue: vk.Queue
+graphicsQueueFamilyIndex: u32 = max(u32)
+computeQueueFamilyIndex: u32 = max(u32)
+graphicsQueue: vk.Queue
+computeQueue: vk.Queue
 
 device: vk.Device
 
@@ -48,8 +50,21 @@ framesReady: [MAX_FRAMES_IN_FLIGHT]sync.Sema
 presentSemaphores := [MAX_FRAMES_IN_FLIGHT]vk.Semaphore{}
 renderSemaphores: []vk.Semaphore = nil
 
-commandPool: vk.CommandPool
+timelineSemaphore: vk.Semaphore
+timelineValue: u64 = 0
+frameTimelineValues: [MAX_FRAMES_IN_FLIGHT]u64
+
+copyTimelineSemaphore: vk.Semaphore
+copyTimelineValue: u64
+
+
+drawCommandPool: vk.CommandPool
 drawCommandBuffers := [MAX_FRAMES_IN_FLIGHT]vk.CommandBuffer{}
+
+computeCommandPool: vk.CommandPool
+// computeCommandBuffers: [MAX_FRAMES_IN_FLIGHT]vk.CommandBuffer
+computeQueueMutex: sync.Mutex
+
 updateSwapchain: bool
 frameIndex: u32 = 0
 imageIndex: u32 = 0
@@ -78,8 +93,15 @@ CameraUBOSize := vk.DeviceSize(size_of(CameraUBO))
 PipelineData :: struct {
 	descriptorSetLayout: vk.DescriptorSetLayout,
 	layout:              vk.PipelineLayout,
-	graphicsPipeline:    vk.Pipeline,
+	pipeline:            vk.Pipeline,
 }
+pipeline_data_delete :: proc(p: PipelineData) {
+	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(device, p.descriptorSetLayout, nil)
+	if p.layout != {} do vk.DestroyPipelineLayout(device, p.layout, nil)
+	if p.pipeline != {} do vk.DestroyPipeline(device, p.pipeline, nil)
+
+}
+
 vulkan_init :: proc() {
 	tracy.Zone()
 	sdl.Vulkan_LoadLibrary(nil)
@@ -189,8 +211,11 @@ vulkan_init :: proc() {
 		for queueFamily, i in queueFamilies {
 			if (.GRAPHICS in queueFamily.queueFlags) {
 				graphicsQueueFamilyIndex = u32(i)
-				break
 			}
+			if (.COMPUTE in queueFamily.queueFlags) {
+				computeQueueFamilyIndex = u32(i)
+			}
+			if graphicsQueueFamilyIndex != max(u32) && computeQueueFamilyIndex != max(u32) do break
 		}
 
 		ensure(
@@ -204,6 +229,7 @@ vulkan_init :: proc() {
 			queueCount       = 1,
 			pQueuePriorities = &qfpriorities,
 		}
+
 		enabledVk12Features := vk.PhysicalDeviceVulkan12Features {
 			sType                                     = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 			descriptorIndexing                        = true,
@@ -211,23 +237,36 @@ vulkan_init :: proc() {
 			descriptorBindingVariableDescriptorCount  = true,
 			runtimeDescriptorArray                    = true,
 			bufferDeviceAddress                       = true,
+			timelineSemaphore                         = true,
+			scalarBlockLayout                         = true,
 		}
+
+		storage16Features := vk.PhysicalDevice16BitStorageFeatures {
+			sType                              = .PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+			storageBuffer16BitAccess           = true,
+			uniformAndStorageBuffer16BitAccess = true,
+		}
+		storage16Features.pNext = &enabledVk12Features
+
 		enabledVk13Features := vk.PhysicalDeviceVulkan13Features {
 			sType                          = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-			pNext                          = &enabledVk12Features,
+			pNext                          = &storage16Features,
 			shaderDemoteToHelperInvocation = true,
 			synchronization2               = true,
 			dynamicRendering               = true,
+		}
+
+		enabledVk10Features := vk.PhysicalDeviceFeatures {
+			samplerAnisotropy = true,
+			shaderInt64       = true,
+			geometryShader    = true,
+			shaderInt16       = true,
 		}
 		deviceExtensions := [?]cstring {
 			vk.KHR_SWAPCHAIN_EXTENSION_NAME,
 			vk.KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 		}
-		enabledVk10Features := vk.PhysicalDeviceFeatures {
-			samplerAnisotropy = true,
-			shaderInt64       = true,
-			geometryShader    = true,
-		}
+
 		deviceCI := vk.DeviceCreateInfo {
 			sType                   = .DEVICE_CREATE_INFO,
 			pNext                   = &enabledVk13Features,
@@ -238,9 +277,14 @@ vulkan_init :: proc() {
 			pEnabledFeatures        = &enabledVk10Features,
 		}
 		chk(vk.CreateDevice(physicalDevice, &deviceCI, nil, &device))
-		vk.GetDeviceQueue(device, graphicsQueueFamilyIndex, 0, &queue)
+		assert(graphicsQueueFamilyIndex != max(u32))
+		assert(computeQueueFamilyIndex != max(u32))
+
+		vk.GetDeviceQueue(device, graphicsQueueFamilyIndex, 0, &graphicsQueue)
+		vk.GetDeviceQueue(device, computeQueueFamilyIndex, 0, &computeQueue)
+
 	}
-	ensure(queue != {})
+	ensure(graphicsQueue != {})
 	ensure(device != {})
 
 	{
@@ -484,14 +528,53 @@ vulkan_init :: proc() {
 		for &s in renderSemaphores {
 			chk(vk.CreateSemaphore(device, &semaphoreCI, nil, &s))
 		}
+		chk(
+			vk.CreateSemaphore(
+				device,
+				&{
+					sType = .SEMAPHORE_CREATE_INFO,
+					pNext = &vk.SemaphoreTypeCreateInfo {
+						sType = .SEMAPHORE_TYPE_CREATE_INFO,
+						semaphoreType = .TIMELINE,
+						initialValue = timelineValue,
+					},
+				},
+				nil,
+				&timelineSemaphore,
+			),
+		)
+		chk(
+			vk.CreateSemaphore(
+				device,
+				&{
+					sType = .SEMAPHORE_CREATE_INFO,
+					pNext = &vk.SemaphoreTypeCreateInfo {
+						sType = .SEMAPHORE_TYPE_CREATE_INFO,
+						semaphoreType = .TIMELINE,
+						initialValue = 0,
+					},
+				},
+				nil,
+				&copyTimelineSemaphore,
+			),
+		)
+		for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+			frameTimelineValues[i] = 0
+		}
+
 	}
 	assert(len(renderSemaphores) != 0)
 	for i in renderSemaphores do ensure(i != {})
 	for i in renderSemaphores do ensure(i != {})
 	for i in fences do ensure(i != {})
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT do sync.sema_post(&framesReady[i])
+	assert(timelineSemaphore != {})
+	for v in frameTimelineValues do assert(v == 0)
+
+	assert(copyTimelineSemaphore != {})
+
+
 	{
-		tracy.Zone()
 
 		chk(
 			vk.CreateCommandPool(
@@ -502,7 +585,7 @@ vulkan_init :: proc() {
 					queueFamilyIndex = graphicsQueueFamilyIndex,
 				},
 				nil,
-				&commandPool,
+				&drawCommandPool,
 			),
 		)
 
@@ -511,15 +594,37 @@ vulkan_init :: proc() {
 				device,
 				&{
 					sType = .COMMAND_BUFFER_ALLOCATE_INFO,
-					commandPool = commandPool,
+					commandPool = drawCommandPool,
 					commandBufferCount = MAX_FRAMES_IN_FLIGHT,
 				},
 				raw_data(drawCommandBuffers[:]),
 			),
 		)
+
+
+		if computeQueueFamilyIndex != graphicsQueueFamilyIndex {
+			chk(
+				vk.CreateCommandPool(
+					device,
+					&vk.CommandPoolCreateInfo {
+						sType = .COMMAND_POOL_CREATE_INFO,
+						flags = {.RESET_COMMAND_BUFFER},
+						queueFamilyIndex = computeQueueFamilyIndex,
+					},
+					nil,
+					&computeCommandPool,
+				),
+			)
+
+
+		} else {
+			computeCommandPool = drawCommandPool
+
+		}
+
 	}
-	ensure(commandPool != {})
-	for i in drawCommandBuffers do ensure(i != {})
+
+	for cb in drawCommandBuffers do ensure(cb != {})
 
 	{
 		tracy.Zone()
@@ -582,6 +687,8 @@ vulkan_cleanup :: proc() {
 		if presentSemaphores[i] != {} do vk.DestroySemaphore(device, presentSemaphores[i], nil)
 		if cameraBuffers[i].alloc != {} do vma.destroy_buffer(allocator, cameraBuffers[i].buffer, cameraBuffers[i].alloc)
 	}
+	if timelineSemaphore != {} do vk.DestroySemaphore(device, timelineSemaphore, nil)
+	if copyTimelineSemaphore != {} do vk.DestroySemaphore(device, copyTimelineSemaphore, nil)
 
 	for s in renderSemaphores {
 		if s != {} do vk.DestroySemaphore(device, s, nil)
@@ -610,7 +717,7 @@ vulkan_cleanup :: proc() {
 	if swapchain != {} do vk.DestroySwapchainKHR(device, swapchain, nil)
 	delete(swapchainImages)
 
-	if commandPool != {} do vk.DestroyCommandPool(device, commandPool, nil)
+	if drawCommandPool != {} do vk.DestroyCommandPool(device, drawCommandPool, nil)
 
 
 	if allocator != nil do vma.destroy_allocator(allocator)

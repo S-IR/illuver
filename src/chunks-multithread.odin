@@ -7,13 +7,14 @@ import "core:math"
 import "core:simd"
 import "core:sync"
 import "core:thread"
+import vk "vendor:vulkan"
+import "vkh"
 ChunkWorkerState :: struct {
-	vertexMapper:  [MAX_POINTS]INDEX_TYPE_USED_IN_CHUNKS,
-	visiblePoints: [MAX_POINTS][3]f32,
-	colors:        [MAX_COLORS][4]f32,
-	indices:       [MAX_INDICES]INDEX_TYPE_USED_IN_CHUNKS,
-	xIdx, zIdx:    int,
-	pos:           [2]i32,
+	xIdx, zIdx:         int,
+	pos:                [2]i32,
+	computeCommandPool: vk.CommandPool,
+	computeCB:          vk.CommandBuffer,
+	computeFence:       vk.Fence,
 }
 chunkWorkerStates: [dynamic]ChunkWorkerState
 chunkWorkersWG: sync.Wait_Group
@@ -42,6 +43,7 @@ ChunkJobType :: union {
 ChunkJob :: struct {
 	xIdx, zIdx: int,
 	pos:        [2]i32,
+	frameIndex: u32,
 	type:       ChunkJobType,
 }
 
@@ -64,7 +66,6 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 		ordered_remove(&chunkJobQueue, 0)
 		sync.mutex_unlock(&chunkJobMutex)
 
-		state^ = {}
 		state.xIdx = job.xIdx
 		state.zIdx = job.zIdx
 		state.pos = job.pos
@@ -109,11 +110,11 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 				}
 			}
 
-			chunk_create_gpu_geometry(chunk, state)
+			chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
 		case InitJob:
 			chunk_init(state)
 		case UpdateJob:
-			chunk_create_gpu_geometry(chunk, state)
+			chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
 		case EditUpdateJob:
 			chunk.points[index_into_point_arrays(v.x, v.y, v.z)] = v.newPointType
 
@@ -136,12 +137,14 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 				}
 			}
 			irrf_set_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
-			chunk_create_gpu_geometry(chunk, state)
+			chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
 		}
 		sync.mutex_unlock(&chunk.mutex)
 		sync.wait_group_done(&chunkWorkersWG)
 	}
 }
+
+
 index_into_energy_cache :: #force_inline proc "contextless" (x, z: int) -> i32 {
 
 	chunkIndexIntoEnergyCacheInt := (x * ENERGY_TICKING_DIRECTION_LEN + z) * MAX_POINTS_INT
@@ -222,10 +225,11 @@ chunk_update_add_thread :: proc(xIdx, zIdx: int) {
 	pos := RenderedChunks[xIdx][zIdx].pos
 
 	job := ChunkJob {
-		xIdx = xIdx,
-		zIdx = zIdx,
-		pos  = RenderedChunks[xIdx][zIdx].pos,
-		type = UpdateJob{},
+		xIdx       = xIdx,
+		zIdx       = zIdx,
+		frameIndex = vkh.frameIndex,
+		pos        = RenderedChunks[xIdx][zIdx].pos,
+		type       = UpdateJob{},
 	}
 	chunk_send_job(job)
 

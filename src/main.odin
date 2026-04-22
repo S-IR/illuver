@@ -143,7 +143,7 @@ main :: proc() {
 
 		vkh.chk(
 			vk.QueueSubmit(
-				vkh.queue,
+				vkh.graphicsQueue,
 				1,
 				&vk.SubmitInfo {
 					sType = .SUBMIT_INFO,
@@ -173,7 +173,11 @@ main :: proc() {
 
 
 	pointPipeline := point_pipeline_init()
-	when ODIN_DEBUG do defer pipeline_data_delete(pointPipeline)
+	when ODIN_DEBUG do defer vkh.pipeline_data_delete(pointPipeline)
+
+
+	computeMeshPipeline = compute_mesh_gen_pipeline_init()
+	when ODIN_DEBUG do defer vkh.pipeline_data_delete(computeMeshPipeline)
 
 	highlightSphere := highlight_sphere_init()
 	when ODIN_DEBUG do defer highlight_sphere_destroy(&highlightSphere)
@@ -594,9 +598,10 @@ vk_begin_frame :: proc(cb: vk.CommandBuffer) {
 vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 	vk.CmdEndRendering(cb^)
 
+	// Transition swapchain image to present layout
 	vk.CmdPipelineBarrier2(
 		cb^,
-		&{
+		&vk.DependencyInfo {
 			sType = .DEPENDENCY_INFO,
 			imageMemoryBarrierCount = 1,
 			pImageMemoryBarriers = &vk.ImageMemoryBarrier2 {
@@ -614,32 +619,57 @@ vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 
 	vk.EndCommandBuffer(cb^)
 
-	waitStage: vk.PipelineStageFlags = {.COLOR_ATTACHMENT_OUTPUT}
-	vkh.chk(
-		vk.QueueSubmit(
-			vkh.queue,
-			1,
-			&vk.SubmitInfo {
-				sType = .SUBMIT_INFO,
-				waitSemaphoreCount = 1,
-				pWaitSemaphores = &vkh.presentSemaphores[vkh.frameIndex],
-				pWaitDstStageMask = &waitStage,
-				commandBufferCount = 1,
-				pCommandBuffers = cb,
-				signalSemaphoreCount = 1,
-				pSignalSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
-			},
-			vkh.fences[vkh.frameIndex],
-		),
-	)
+	vkh.timelineValue += 1
+	vkh.frameTimelineValues[vkh.frameIndex] = vkh.timelineValue
 
+
+	// Prepare wait semaphore (presentSemaphore from acquire)
+	waitInfo := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = vkh.presentSemaphores[vkh.frameIndex],
+		value     = 0, // binary semaphore, value ignored
+		stageMask = {.COLOR_ATTACHMENT_OUTPUT},
+	}
+
+	// Prepare signal semaphores: renderSemaphore (for present) and timelineSemaphore (for workers)
+	renderSignalInfo := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = vkh.renderSemaphores[vkh.imageIndex],
+		value     = 0,
+		stageMask = {.ALL_COMMANDS},
+	}
+	timelineSignalInfo := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = vkh.timelineSemaphore,
+		value     = vkh.timelineValue,
+		stageMask = {.ALL_COMMANDS},
+	}
+
+	signalInfos := [?]vk.SemaphoreSubmitInfo{renderSignalInfo, timelineSignalInfo}
+
+	submitInfo := vk.SubmitInfo2 {
+		sType                    = .SUBMIT_INFO_2,
+		waitSemaphoreInfoCount   = 1,
+		pWaitSemaphoreInfos      = &waitInfo,
+		signalSemaphoreInfoCount = len(signalInfos),
+		pSignalSemaphoreInfos    = raw_data(signalInfos[:]),
+		commandBufferInfoCount   = 1,
+		pCommandBufferInfos      = &vk.CommandBufferSubmitInfo {
+			commandBuffer = cb^,
+			sType = .COMMAND_BUFFER_SUBMIT_INFO,
+		},
+	}
+	sync.mutex_lock(&vkh.computeQueueMutex)
+	vk.QueueSubmit2(vkh.graphicsQueue, 1, &submitInfo, vkh.fences[vkh.frameIndex])
+
+	// Present
 	vkh.frameIndex = (vkh.frameIndex + 1) % vkh.MAX_FRAMES_IN_FLIGHT
 	ui.frame_reset()
 
 	vkh.vk_chk_swapchain(
 		vk.QueuePresentKHR(
-			vkh.queue,
-			&{
+			vkh.graphicsQueue,
+			&vk.PresentInfoKHR {
 				sType = .PRESENT_INFO_KHR,
 				waitSemaphoreCount = 1,
 				pWaitSemaphores = &vkh.renderSemaphores[vkh.imageIndex],
@@ -649,4 +679,6 @@ vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 			},
 		),
 	)
+	sync.mutex_unlock(&vkh.computeQueueMutex)
+
 }

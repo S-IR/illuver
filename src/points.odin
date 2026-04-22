@@ -255,7 +255,7 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 				layout = p.layout,
 			},
 			nil,
-			&p.graphicsPipeline,
+			&p.pipeline,
 		),
 	)
 
@@ -263,15 +263,6 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 	return p
 }
 
-
-pipeline_data_delete :: proc(p: vkh.PipelineData) {
-	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkh.device, p.descriptorSetLayout, nil)
-
-	if p.layout != {} do vk.DestroyPipelineLayout(vkh.device, p.layout, nil)
-
-	if p.graphicsPipeline != {} do vk.DestroyPipeline(vkh.device, p.graphicsPipeline, nil)
-
-}
 
 // is_point_visible :: proc(chunk: ^Chunk, x, y, z: int) -> bool {
 // 	p := chunk.points[x][y][z]
