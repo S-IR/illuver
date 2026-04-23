@@ -54,13 +54,11 @@ Chunk :: struct {
 	buffers:           struct {
 		vertices: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
 		// indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
-		colors:   [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
 		compute:  struct {
 			pointsInput:     vkh.VkBufferPoolElem, // u16 input (uploaded when dirty)
-			counters:        vkh.VkBufferPoolElem, // atomic counters (3x u32)
+			counter:         vkh.VkBufferPoolElem, // atomic counters (3x u32)
 			uniform:         vkh.VkBufferPoolElem,
 			stagingVertices: vkh.VkBufferPoolElem,
-			stagingColors:   vkh.VkBufferPoolElem,
 		},
 	},
 	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
@@ -68,7 +66,6 @@ Chunk :: struct {
 	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
 	mutex:             sync.Mutex,
 	totalPoints:       u32,
-	totalTriangles:    u32,
 	arena:             virtual.Arena,
 	alloc:             mem.Allocator,
 	dirty:             bool,
@@ -227,8 +224,7 @@ MAX_POINTS_INT :: int(MAX_POINTS)
 MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
 MAX_COLORS :: MAX_INDICES
 INDEX_TYPE_USED_IN_CHUNKS :: u32
-CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_POINTS * size_of([3]f32) * 3
-CHUNK_GPU_COLOR_BUFFER_SIZE :: MAX_COLORS * size_of([4]f32)
+CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_POINTS * size_of([4]f32) * 3
 
 when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	render_chunk_init :: VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_chunk_init
@@ -499,7 +495,6 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 			tracy.Zone()
 			for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 				if chunk.buffers.vertices[i].buffer != {} do continue
-				assert(chunk.buffers.colors[i].buffer == {})
 
 				vkh.chk(
 					vma.create_buffer(
@@ -521,24 +516,6 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 				)
 
 
-				vkh.chk(
-					vma.create_buffer(
-						vkh.allocator,
-						{
-							sType = .BUFFER_CREATE_INFO,
-							size = vk.DeviceSize(CHUNK_GPU_COLOR_BUFFER_SIZE),
-							usage = {.STORAGE_BUFFER, .TRANSFER_DST},
-						},
-						{
-							required_flags = {.HOST_VISIBLE},
-							flags = {.Host_Access_Sequential_Write, .Mapped},
-							usage = .Auto,
-						},
-						&chunk.buffers.colors[i].buffer,
-						&chunk.buffers.colors[i].alloc,
-						nil,
-					),
-				)
 			}
 		}
 		chunk_geometry_calc_buffers_create(chunk)
@@ -638,7 +615,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 
 	chunk_create_gpu_geometry :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, frameIndex: u32) {
 		tracy.Zone()
-		chunk_generate_gpu(chunk, state, computeMeshPipeline)
+		chunk_geometry_calculate(chunk, state, chunkGeometryCalcPipeline)
 		chunk_copy_current_to_other_frames(chunk, state, frameIndex)
 
 	}
@@ -744,15 +721,12 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 	return {fx, fy, fz} / 2
 }
 
-
 chunks_draw :: proc(
 	cb: vk.CommandBuffer,
-	p: ^vkh.PipelineData,
-	CameraUBO: vk.Buffer,
-	CameraUBOSize: vk.DeviceSize,
+	triPipeline: ^vkh.PipelineData,
+	pointPipeline: ^vkh.PipelineData,
 	currCamera: ^camera.Camera,
 ) {
-	vk.CmdBindPipeline(cb, .GRAPHICS, p.pipeline)
 	vk.CmdSetViewport(
 		cb,
 		0,
@@ -772,14 +746,11 @@ chunks_draw :: proc(
 		1,
 		&vk.Rect2D{extent = {width = gs.screenWidth, height = gs.screenHeight}},
 	)
+
 	for x in 0 ..< len(RenderedChunks) {
 		for y in 0 ..< len(RenderedChunks[0]) {
-
 			chunk := &RenderedChunks[x][y]
-			// if chunk.pos != {0, 0} do continue
 			if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
-			// assert(chunk.totalIndices > 0)
-			// if chunk.totalIndices == 0 do continue
 
 			if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
 				waitInfo := vk.SemaphoreWaitInfo {
@@ -792,27 +763,14 @@ chunks_draw :: proc(
 				chunk.copyTimelineValue[vkh.frameIndex] = 0
 			}
 
-
-			assert(chunk.buffers.vertices[vkh.frameIndex].alloc != {})
 			vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
 			vertexOffset := vk.DeviceSize(0)
-
 			vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
-			#assert(INDEX_TYPE_USED_IN_CHUNKS == u32)
-
-			// vk.CmdBindIndexBuffer(cb, chunk.buffers.indices[vkh.frameIndex].buffer, 0, .UINT32)
-
 
 			cameraInfo := vk.DescriptorBufferInfo {
 				buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
 				offset = 0,
 				range  = vkh.CameraUBOSize,
-			}
-
-			colorInfo := vk.DescriptorBufferInfo {
-				buffer = chunk.buffers.colors[vkh.frameIndex].buffer,
-				offset = 0,
-				range  = vk.DeviceSize(vk.WHOLE_SIZE),
 			}
 
 			writes := [?]vk.WriteDescriptorSet {
@@ -823,24 +781,48 @@ chunks_draw :: proc(
 					descriptorType = .UNIFORM_BUFFER,
 					pBufferInfo = &cameraInfo,
 				},
-				{
-					sType = .WRITE_DESCRIPTOR_SET,
-					dstBinding = 1,
-					descriptorCount = 1,
-					descriptorType = .STORAGE_BUFFER,
-					pBufferInfo = &colorInfo,
-				},
 			}
 
+			vk.CmdBindPipeline(cb, .GRAPHICS, triPipeline.pipeline)
 			vk.CmdPushDescriptorSetKHR(
 				cb,
 				.GRAPHICS,
-				p.layout,
+				triPipeline.layout,
 				0,
 				len(writes),
 				raw_data(writes[:]),
 			)
 
+			pushTri := u32(0)
+			vk.CmdPushConstants(
+				cb,
+				triPipeline.layout,
+				{.VERTEX, .FRAGMENT},
+				0,
+				size_of(u32),
+				&pushTri,
+			)
+			vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
+
+			vk.CmdBindPipeline(cb, .GRAPHICS, pointPipeline.pipeline)
+			vk.CmdPushDescriptorSetKHR(
+				cb,
+				.GRAPHICS,
+				pointPipeline.layout,
+				0,
+				len(writes),
+				raw_data(writes[:]),
+			)
+
+			pushPoint := u32(1)
+			vk.CmdPushConstants(
+				cb,
+				pointPipeline.layout,
+				{.VERTEX, .FRAGMENT},
+				0,
+				size_of(u32),
+				&pushPoint,
+			)
 			vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
 		}
 	}
@@ -900,14 +882,6 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 			chunk.buffers.vertices[i] = {}
 		}
 
-		if chunk.buffers.colors[i].alloc != {} {
-			vma.destroy_buffer(
-				vkh.allocator,
-				chunk.buffers.colors[i].buffer,
-				chunk.buffers.colors[i].alloc,
-			)
-			chunk.buffers.colors[i] = {}
-		}
 
 	}
 	chunk_geometry_calc_buffers_destroy(chunk)
@@ -917,5 +891,4 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 	free_all(chunk.alloc)
 	chunk.pos = {0, 0}
 	chunk.totalPoints = 0
-	chunk.totalTriangles = 0
 }

@@ -58,7 +58,7 @@ when ODIN_DEBUG && ENABLE_SPALL {
 }
 TRACY_ENABLE :: true
 
-DEBUG_MODE_IGNORE_SAVE :: true && ODIN_DEBUG
+DEBUG_MODE_IGNORE_SAVE :: false && ODIN_DEBUG
 main :: proc() {
 
 	when TRACY_ENABLE {
@@ -172,12 +172,21 @@ main :: proc() {
 	when ODIN_DEBUG do defer chunks_destroy()
 
 
-	pointPipeline := point_pipeline_init()
-	when ODIN_DEBUG do defer vkh.pipeline_data_delete(pointPipeline)
+	pointTrianglePipeline, pointDotPipeline := point_pipeline_init()
+	when ODIN_DEBUG {
+		defer {
+			if pointTrianglePipeline.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkh.device, pointTrianglePipeline.descriptorSetLayout, nil)
+			if pointTrianglePipeline.layout != {} do vk.DestroyPipelineLayout(vkh.device, pointTrianglePipeline.layout, nil)
+			if pointTrianglePipeline.pipeline != {} do vk.DestroyPipeline(vkh.device, pointTrianglePipeline.pipeline, nil)
+			if pointDotPipeline.pipeline != {} do vk.DestroyPipeline(vkh.device, pointDotPipeline.pipeline, nil)
+
+		}
+
+	}
 
 
-	computeMeshPipeline = compute_mesh_gen_pipeline_init()
-	when ODIN_DEBUG do defer vkh.pipeline_data_delete(computeMeshPipeline)
+	chunkGeometryCalcPipeline = chunk_geometry_calc_pipeline_init()
+	when ODIN_DEBUG do defer vkh.pipeline_data_delete(chunkGeometryCalcPipeline)
 
 	highlightSphere := highlight_sphere_init()
 	when ODIN_DEBUG do defer highlight_sphere_destroy(&highlightSphere)
@@ -391,7 +400,8 @@ main :: proc() {
 				pressedRightClickThisFrame,
 				{
 					highlightSpere = &highlightSphere,
-					pointPipeline = &pointPipeline,
+					pointTrianglePipeline = &pointTrianglePipeline,
+					pointDotPipeline = &pointDotPipeline,
 					uiPipeline = &uiPipeline,
 				},
 			)
@@ -407,16 +417,18 @@ game_render :: proc(
 	mouseX, mouseY: f32,
 	leftClickIsHeldThisFrame, pressedRightClickThisFrame: bool,
 	renderData: struct {
-		highlightSpere: ^HighlightSphere,
-		pointPipeline:  ^vkh.PipelineData,
-		uiPipeline:     ^vkh.PipelineData,
+		highlightSpere:        ^HighlightSphere,
+		pointTrianglePipeline: ^vkh.PipelineData,
+		pointDotPipeline:      ^vkh.PipelineData,
+		uiPipeline:            ^vkh.PipelineData,
 	},
 ) {
 	assert(currCamera != nil)
 	assert(userInfoFileHandle != nil)
 	assert(inventory != nil)
 	assert(renderData.highlightSpere != nil)
-	assert(renderData.pointPipeline != nil)
+	assert(renderData.pointTrianglePipeline != nil)
+	assert(renderData.pointDotPipeline != nil)
 	assert(renderData.uiPipeline != nil)
 
 	defer user_info_frame_end_store(
@@ -494,13 +506,7 @@ game_render :: proc(
 
 	}
 
-	chunks_draw(
-		cb,
-		renderData.pointPipeline,
-		vkh.cameraBuffers[vkh.frameIndex].buffer,
-		vk.DeviceSize(size_of(vkh.CameraUBO)),
-		currCamera,
-	)
+	chunks_draw(cb, renderData.pointTrianglePipeline, renderData.pointDotPipeline, currCamera)
 
 
 	spellbar_render(inventory)

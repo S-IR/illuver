@@ -109,23 +109,19 @@ Random_Colors_Per_Point_Type := [PointType][4]f32 {
 BottomFacedIndices := [?]u16{0, 1, 2, 0, 2, 3}
 
 
-point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
+point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: vkh.PipelineData) {
+	pushRange := vk.PushConstantRange {
+		stageFlags = {.VERTEX, .FRAGMENT},
+		offset     = 0,
+		size       = size_of(u32),
+	}
 
-	// --- Descriptor layout (matches SDL shader usage) ---
 	descLayoutBindings := [?]vk.DescriptorSetLayoutBinding {
-		// binding 0 → vertex uniform buffer
 		{
 			binding = 0,
 			descriptorType = .UNIFORM_BUFFER,
 			descriptorCount = 1,
 			stageFlags = {.VERTEX},
-		},
-		// binding 1 → fragment storage buffer
-		{
-			binding = 1,
-			descriptorType = .STORAGE_BUFFER,
-			descriptorCount = 1,
-			stageFlags = {.FRAGMENT},
 		},
 	}
 
@@ -139,40 +135,41 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 				pBindings = raw_data(descLayoutBindings[:]),
 			},
 			nil,
-			&p.descriptorSetLayout,
+			&triPipeline.descriptorSetLayout,
 		),
 	)
+	pointPipeline.descriptorSetLayout = triPipeline.descriptorSetLayout
 
-	// --- Load shaders ---
-	VERT_SPV :: #load("../build/shader-binaries/point.vertex.spv")
-	FRAG_SPV :: #load("../build/shader-binaries/point.fragment.spv")
-
-	vertModule := vkh.create_shader_module(vkh.device, VERT_SPV)
-	fragModule := vkh.create_shader_module(vkh.device, FRAG_SPV)
-
-	defer vk.DestroyShaderModule(vkh.device, vertModule, nil)
-	defer vk.DestroyShaderModule(vkh.device, fragModule, nil)
-	// --- Pipeline layout ---
 	vkh.chk(
 		vk.CreatePipelineLayout(
 			vkh.device,
 			&vk.PipelineLayoutCreateInfo {
 				sType = .PIPELINE_LAYOUT_CREATE_INFO,
 				setLayoutCount = 1,
-				pSetLayouts = &p.descriptorSetLayout,
+				pSetLayouts = &triPipeline.descriptorSetLayout,
+				pushConstantRangeCount = 1,
+				pPushConstantRanges = &pushRange,
 			},
 			nil,
-			&p.layout,
+			&triPipeline.layout,
 		),
 	)
+	pointPipeline.layout = triPipeline.layout
+
+	VERT_SPV :: #load("../build/shader-binaries/point.vertex.spv")
+	FRAG_SPV :: #load("../build/shader-binaries/point.fragment.spv")
+
+	vertModule := vkh.create_shader_module(vkh.device, VERT_SPV)
+	fragModule := vkh.create_shader_module(vkh.device, FRAG_SPV)
+	defer vk.DestroyShaderModule(vkh.device, vertModule, nil)
+	defer vk.DestroyShaderModule(vkh.device, fragModule, nil)
 
 	viBindings := [?]vk.VertexInputBindingDescription {
-		{binding = 0, stride = size_of([3]f32), inputRate = .VERTEX},
-		{binding = 1, stride = size_of([2]f32), inputRate = .VERTEX},
+		{binding = 0, stride = 16, inputRate = .VERTEX},
 	}
 	vaDescriptors := [?]vk.VertexInputAttributeDescription {
 		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = 0},
-		{location = 1, binding = 1, format = .R32G32_SFLOAT, offset = 0},
+		{location = 1, binding = 0, format = .R32_UINT, offset = 12},
 	}
 
 	dynamicStates := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
@@ -192,77 +189,84 @@ point_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 		},
 	}
 
-	// --- Graphics pipeline ---
-	vkh.chk(
-		vk.CreateGraphicsPipelines(
-			vkh.device,
-			{},
-			1,
-			&vk.GraphicsPipelineCreateInfo {
-				sType = .GRAPHICS_PIPELINE_CREATE_INFO,
-				pNext = &vk.PipelineRenderingCreateInfo {
-					sType = .PIPELINE_RENDERING_CREATE_INFO,
-					colorAttachmentCount = 1,
-					pColorAttachmentFormats = &vkh.swapchainImageFormat,
-					depthAttachmentFormat = vkh.depthFormat,
-				},
-				stageCount = len(pipelineStages),
-				pStages = raw_data(pipelineStages[:]),
-				pVertexInputState = &vk.PipelineVertexInputStateCreateInfo {
-					sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-					vertexBindingDescriptionCount = len(viBindings),
-					pVertexBindingDescriptions = raw_data(viBindings[:]),
-					vertexAttributeDescriptionCount = len(vaDescriptors),
-					pVertexAttributeDescriptions = raw_data(vaDescriptors[:]),
-				},
-				pInputAssemblyState = &vk.PipelineInputAssemblyStateCreateInfo {
-					sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-					topology = .TRIANGLE_LIST,
-				},
-				pViewportState = &vk.PipelineViewportStateCreateInfo {
-					sType = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-					viewportCount = 1,
-					scissorCount = 1,
-				},
-				pRasterizationState = &vk.PipelineRasterizationStateCreateInfo {
-					sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-					lineWidth = 1.0,
-					cullMode = {},
-					frontFace = .COUNTER_CLOCKWISE,
-				},
-				pMultisampleState = &vk.PipelineMultisampleStateCreateInfo {
-					sType = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-					rasterizationSamples = {._1},
-				},
-				pDepthStencilState = &vk.PipelineDepthStencilStateCreateInfo {
-					sType = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-					depthTestEnable = true,
-					depthWriteEnable = true,
-					depthCompareOp = .LESS,
-				},
-				pColorBlendState = &vk.PipelineColorBlendStateCreateInfo {
-					sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-					attachmentCount = 1,
-					pAttachments = &vk.PipelineColorBlendAttachmentState {
-						colorWriteMask = {.R, .G, .B, .A},
-					},
-				},
-				pDynamicState = &vk.PipelineDynamicStateCreateInfo {
-					sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-					dynamicStateCount = len(dynamicStates),
-					pDynamicStates = raw_data(dynamicStates[:]),
-				},
-				layout = p.layout,
+	createInfo := vk.GraphicsPipelineCreateInfo {
+		sType               = .GRAPHICS_PIPELINE_CREATE_INFO,
+		pNext               = &vk.PipelineRenderingCreateInfo {
+			sType = .PIPELINE_RENDERING_CREATE_INFO,
+			colorAttachmentCount = 1,
+			pColorAttachmentFormats = &vkh.swapchainImageFormat,
+			depthAttachmentFormat = vkh.depthFormat,
+		},
+		stageCount          = len(pipelineStages),
+		pStages             = raw_data(pipelineStages[:]),
+		pVertexInputState   = &vk.PipelineVertexInputStateCreateInfo {
+			sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+			vertexBindingDescriptionCount = len(viBindings),
+			pVertexBindingDescriptions = raw_data(viBindings[:]),
+			vertexAttributeDescriptionCount = len(vaDescriptors),
+			pVertexAttributeDescriptions = raw_data(vaDescriptors[:]),
+		},
+		pInputAssemblyState = &vk.PipelineInputAssemblyStateCreateInfo {
+			sType    = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+			topology = .TRIANGLE_LIST, // default, will be overridden for points
+		},
+		pViewportState      = &vk.PipelineViewportStateCreateInfo {
+			sType = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+			viewportCount = 1,
+			scissorCount = 1,
+		},
+		pRasterizationState = &vk.PipelineRasterizationStateCreateInfo {
+			sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+			lineWidth = 1.0,
+			cullMode = {},
+			frontFace = .COUNTER_CLOCKWISE,
+		},
+		pMultisampleState   = &vk.PipelineMultisampleStateCreateInfo {
+			sType = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+			rasterizationSamples = {._1},
+		},
+		pDepthStencilState  = &vk.PipelineDepthStencilStateCreateInfo {
+			sType = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+			depthTestEnable = true,
+			depthWriteEnable = true,
+			depthCompareOp = .LESS,
+		},
+		pColorBlendState    = &vk.PipelineColorBlendStateCreateInfo {
+			sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			attachmentCount = 1,
+			pAttachments = &vk.PipelineColorBlendAttachmentState {
+				colorWriteMask = {.R, .G, .B, .A},
 			},
-			nil,
-			&p.pipeline,
-		),
+		},
+		pDynamicState       = &vk.PipelineDynamicStateCreateInfo {
+			sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+			dynamicStateCount = len(dynamicStates),
+			pDynamicStates = raw_data(dynamicStates[:]),
+		},
+		layout              = triPipeline.layout,
+	}
+
+	vkh.chk(vk.CreateGraphicsPipelines(vkh.device, {}, 1, &createInfo, nil, &triPipeline.pipeline))
+	pointRasterState := vk.PipelineRasterizationStateCreateInfo {
+		sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		lineWidth   = 1.0,
+		cullMode    = {},
+		frontFace   = .COUNTER_CLOCKWISE,
+		polygonMode = .LINE,
+	}
+	createInfo.pInputAssemblyState = &vk.PipelineInputAssemblyStateCreateInfo {
+		sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		topology = .TRIANGLE_LIST,
+	}
+	createInfo.pRasterizationState = &pointRasterState
+
+	vkh.chk(
+		vk.CreateGraphicsPipelines(vkh.device, {}, 1, &createInfo, nil, &pointPipeline.pipeline),
 	)
 
 
-	return p
+	return triPipeline, pointPipeline
 }
-
 
 // is_point_visible :: proc(chunk: ^Chunk, x, y, z: int) -> bool {
 // 	p := chunk.points[x][y][z]

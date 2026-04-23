@@ -10,10 +10,10 @@ ComputeMeshUniforms :: struct {
 	chunkMin: [4]i32, // pad to vec4
 	seed:     u32,
 }
-computeMeshPipeline: vkh.PipelineData
+chunkGeometryCalcPipeline: vkh.PipelineData
 
-compute_mesh_gen_pipeline_init :: proc() -> (p: vkh.PipelineData) {
-	bindings := [5]vk.DescriptorSetLayoutBinding {
+chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
+	bindings := [4]vk.DescriptorSetLayoutBinding {
 		{
 			binding = 0,
 			descriptorType = .STORAGE_BUFFER,
@@ -31,15 +31,9 @@ compute_mesh_gen_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 			descriptorType = .STORAGE_BUFFER,
 			descriptorCount = 1,
 			stageFlags = {.COMPUTE},
-		}, // colors
+		}, // atomic counter
 		{
 			binding = 3,
-			descriptorType = .STORAGE_BUFFER,
-			descriptorCount = 1,
-			stageFlags = {.COMPUTE},
-		}, // atomic counters
-		{
-			binding = 4,
 			descriptorType = .UNIFORM_BUFFER,
 			descriptorCount = 1,
 			stageFlags = {.COMPUTE},
@@ -122,21 +116,21 @@ chunk_geometry_calc_buffers_create :: proc(chunk: ^Chunk) {
 		)
 	}
 
-	if chunk.buffers.compute.counters.buffer == {} {
+	if chunk.buffers.compute.counter.buffer == {} {
 		vkh.chk(
 			vma.create_buffer(
 				vkh.allocator,
 				vk.BufferCreateInfo {
 					sType = .BUFFER_CREATE_INFO,
-					size = vk.DeviceSize(2 * size_of(u32)),
+					size = vk.DeviceSize(size_of(u32)),
 					usage = {.STORAGE_BUFFER, .TRANSFER_DST},
 				},
 				{
 					flags = {.Host_Access_Sequential_Write, .Mapped},
 					required_flags = {.HOST_VISIBLE},
 				},
-				&chunk.buffers.compute.counters.buffer,
-				&chunk.buffers.compute.counters.alloc,
+				&chunk.buffers.compute.counter.buffer,
+				&chunk.buffers.compute.counter.alloc,
 				nil,
 			),
 		)
@@ -180,28 +174,12 @@ chunk_geometry_calc_buffers_create :: proc(chunk: ^Chunk) {
 	}
 
 
-	// Staging color buffer (size = MAX_COLORS * sizeof(float4))
-	//
-	if chunk.buffers.compute.stagingColors.buffer == {} {
-		vkh.chk(
-			vma.create_buffer(
-				vkh.allocator,
-				{
-					sType = .BUFFER_CREATE_INFO,
-					size = vk.DeviceSize(CHUNK_GPU_COLOR_BUFFER_SIZE),
-					usage = {.STORAGE_BUFFER, .TRANSFER_SRC},
-				},
-				{usage = .Auto, flags = {.Mapped, .Host_Access_Sequential_Write}},
-				&chunk.buffers.compute.stagingColors.buffer,
-				&chunk.buffers.compute.stagingColors.alloc,
-				nil,
-			),
-		)
-	}
-
-
 }
-chunk_generate_gpu :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, pipeline: vkh.PipelineData) {
+chunk_geometry_calculate :: proc(
+	chunk: ^Chunk,
+	state: ^ChunkWorkerState,
+	pipeline: vkh.PipelineData,
+) {
 	vk.WaitForFences(vkh.device, 1, &state.computeFence, true, max(u64))
 	vk.ResetFences(vkh.device, 1, &state.computeFence)
 
@@ -215,7 +193,7 @@ chunk_generate_gpu :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, pipeline: vk
 	zero := u32(0)
 	vk.CmdFillBuffer(
 		state.computeCB,
-		chunk.buffers.compute.counters.buffer,
+		chunk.buffers.compute.counter.buffer,
 		0,
 		vk.DeviceSize(vk.WHOLE_SIZE),
 		zero,
@@ -225,7 +203,7 @@ chunk_generate_gpu :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, pipeline: vk
 		sType         = .BUFFER_MEMORY_BARRIER,
 		srcAccessMask = {.TRANSFER_WRITE},
 		dstAccessMask = {.SHADER_READ, .SHADER_WRITE},
-		buffer        = chunk.buffers.compute.counters.buffer,
+		buffer        = chunk.buffers.compute.counter.buffer,
 		size          = vk.DeviceSize(vk.WHOLE_SIZE),
 	}
 	vk.CmdPipelineBarrier(
@@ -279,7 +257,7 @@ chunk_generate_gpu :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, pipeline: vk
 	vk.CmdBindPipeline(state.computeCB, .COMPUTE, pipeline.pipeline)
 
 
-	writes := [5]vk.WriteDescriptorSet {
+	writes := [4]vk.WriteDescriptorSet {
 		{ 	// binding 0: pointsInput
 			sType           = .WRITE_DESCRIPTOR_SET,
 			dstBinding      = 0,
@@ -300,29 +278,19 @@ chunk_generate_gpu :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, pipeline: vk
 				range = vk.DeviceSize(vk.WHOLE_SIZE),
 			},
 		},
-		{ 	// binding 2: stagingColors
+		{ 	// binding 3: counters
 			sType           = .WRITE_DESCRIPTOR_SET,
 			dstBinding      = 2,
 			descriptorCount = 1,
 			descriptorType  = .STORAGE_BUFFER,
 			pBufferInfo     = &vk.DescriptorBufferInfo {
-				buffer = chunk.buffers.compute.stagingColors.buffer,
-				range = vk.DeviceSize(vk.WHOLE_SIZE),
-			},
-		},
-		{ 	// binding 3: counters
-			sType           = .WRITE_DESCRIPTOR_SET,
-			dstBinding      = 3,
-			descriptorCount = 1,
-			descriptorType  = .STORAGE_BUFFER,
-			pBufferInfo     = &vk.DescriptorBufferInfo {
-				buffer = chunk.buffers.compute.counters.buffer,
+				buffer = chunk.buffers.compute.counter.buffer,
 				range = vk.DeviceSize(vk.WHOLE_SIZE),
 			},
 		},
 		{ 	// binding 4: uniform
 			sType           = .WRITE_DESCRIPTOR_SET,
-			dstBinding      = 4,
+			dstBinding      = 3,
 			descriptorCount = 1,
 			descriptorType  = .UNIFORM_BUFFER,
 			pBufferInfo     = &vk.DescriptorBufferInfo {
@@ -341,19 +309,12 @@ chunk_generate_gpu :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, pipeline: vk
 	)
 
 
-	outBarriers := [2]vk.BufferMemoryBarrier {
+	outBarriers := [1]vk.BufferMemoryBarrier {
 		{
 			sType = .BUFFER_MEMORY_BARRIER,
 			srcAccessMask = {.SHADER_WRITE},
 			dstAccessMask = {.TRANSFER_READ},
 			buffer = chunk.buffers.compute.stagingVertices.buffer,
-			size = vk.DeviceSize(vk.WHOLE_SIZE),
-		},
-		{
-			sType = .BUFFER_MEMORY_BARRIER,
-			srcAccessMask = {.SHADER_WRITE},
-			dstAccessMask = {.TRANSFER_READ},
-			buffer = chunk.buffers.compute.stagingColors.buffer,
 			size = vk.DeviceSize(vk.WHOLE_SIZE),
 		},
 	}
@@ -393,13 +354,11 @@ chunk_generate_gpu :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, pipeline: vk
 	vk.ResetFences(vkh.device, 1, &state.computeFence)
 
 	countersPtr: rawptr
-	vma.map_memory(vkh.allocator, chunk.buffers.compute.counters.alloc, &countersPtr)
-	counts := (^[2]u32)(countersPtr)
-	chunk.totalPoints = counts[0]
-	chunk.totalTriangles = counts[1]
+	vma.map_memory(vkh.allocator, chunk.buffers.compute.counter.alloc, &countersPtr)
+	counts := (^u32)(countersPtr)
+	chunk.totalPoints = counts^
 	assert(chunk.totalPoints > 0)
-	assert(chunk.totalTriangles > 0)
-	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counters.alloc)
+	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
 
 
 }
@@ -415,14 +374,12 @@ chunk_copy_current_to_other_frames :: proc(
 	)
 
 	srcVert := chunk.buffers.compute.stagingVertices.buffer
-	srcColor := chunk.buffers.compute.stagingColors.buffer
-	copySizeVert := vk.DeviceSize(chunk.totalPoints * size_of([3]f32))
-	copySizeColor := vk.DeviceSize(chunk.totalTriangles * size_of([4]f32))
+	copySizeVert := vk.DeviceSize(chunk.totalPoints * size_of([4]f32))
 
 	barrierCount := 0
-	barriers: [vkh.MAX_FRAMES_IN_FLIGHT * 2]vk.BufferMemoryBarrier
+	barriers: [vkh.MAX_FRAMES_IN_FLIGHT]vk.BufferMemoryBarrier
 
-	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
+	for &barrier, i in barriers {
 		vk.CmdCopyBuffer(
 			state.computeCB,
 			srcVert,
@@ -430,30 +387,15 @@ chunk_copy_current_to_other_frames :: proc(
 			1,
 			&vk.BufferCopy{size = copySizeVert},
 		)
-		vk.CmdCopyBuffer(
-			state.computeCB,
-			srcColor,
-			chunk.buffers.colors[i].buffer,
-			1,
-			&vk.BufferCopy{size = copySizeColor},
-		)
 
-		barriers[barrierCount] = {
+		barrier = {
 			sType         = .BUFFER_MEMORY_BARRIER,
 			srcAccessMask = {.TRANSFER_WRITE},
 			dstAccessMask = {.VERTEX_ATTRIBUTE_READ},
 			buffer        = chunk.buffers.vertices[i].buffer,
 			size          = vk.DeviceSize(vk.WHOLE_SIZE),
 		}
-		barrierCount += 1
-		barriers[barrierCount] = {
-			sType         = .BUFFER_MEMORY_BARRIER,
-			srcAccessMask = {.TRANSFER_WRITE},
-			dstAccessMask = {.SHADER_READ},
-			buffer        = chunk.buffers.colors[i].buffer,
-			size          = vk.DeviceSize(vk.WHOLE_SIZE),
-		}
-		barrierCount += 1
+
 	}
 
 	vk.CmdPipelineBarrier(
@@ -507,10 +449,9 @@ chunk_copy_current_to_other_frames :: proc(
 }
 chunk_geometry_calc_buffers_destroy :: proc(chunk: ^Chunk) {
 	if chunk.buffers.compute.pointsInput.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.pointsInput.buffer, chunk.buffers.compute.pointsInput.alloc)
-	if chunk.buffers.compute.counters.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.counters.buffer, chunk.buffers.compute.counters.alloc)
+	if chunk.buffers.compute.counter.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.counter.buffer, chunk.buffers.compute.counter.alloc)
 	if chunk.buffers.compute.uniform.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.uniform.buffer, chunk.buffers.compute.uniform.alloc)
 
-	if chunk.buffers.compute.stagingColors.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.stagingColors.buffer, chunk.buffers.compute.stagingColors.alloc)
 	if chunk.buffers.compute.stagingVertices.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.stagingVertices.buffer, chunk.buffers.compute.stagingVertices.alloc)
 
 

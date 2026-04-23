@@ -261,6 +261,7 @@ vulkan_init :: proc() {
 			shaderInt64       = true,
 			geometryShader    = true,
 			shaderInt16       = true,
+			fillModeNonSolid  = true,
 		}
 		deviceExtensions := [?]cstring {
 			vk.KHR_SWAPCHAIN_EXTENSION_NAME,

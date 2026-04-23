@@ -34,7 +34,8 @@ main :: proc() {
 			continue
 		}
 
-		if !strings.has_suffix(file.fullpath, ".glsl") do continue
+		// Process .slang files instead of .glsl
+		if !strings.has_suffix(file.fullpath, ".slang") do continue
 
 		relPath, relErr := filepath.rel(inputDir, file.fullpath)
 		if relErr != nil {
@@ -46,6 +47,8 @@ main :: proc() {
 			{outputDir, dirOfRelativePath},
 			context.temp_allocator,
 		)
+
+		// Detect compute shader by ".comp." in filename (legacy convention)
 		isCompute := strings.contains(file.fullpath, ".comp.")
 
 		if SPIRV {
@@ -54,10 +57,8 @@ main :: proc() {
 			} else {
 				compile_shader(file.fullpath, actualOutputPath, "spv", .vertex)
 				compile_shader(file.fullpath, actualOutputPath, "spv", .fragment)
-
 			}
 		}
-
 	}
 }
 
@@ -66,44 +67,52 @@ compile_shader :: proc(path, dir, ext: string, stage: enum {
 		fragment,
 		compute,
 	}) {
-	name := strings.trim_suffix(filepath.base(path), ".glsl")
+	name := strings.trim_suffix(filepath.base(path), ".slang")
 
+	// Entry point names (standardized)
+	entryName: string
+	switch stage {
+	case .vertex:
+		entryName = "vertexMain"
+	case .fragment:
+		entryName = "fragmentMain"
+	case .compute:
+		entryName = "main"
+	}
 
-	when ODIN_DEBUG do debugLine :: "-gVS"
 	stageString, ok := fmt.enum_value_to_string(stage)
 	ensure(ok)
 
 	os.make_directory_all(dir)
+
 	cmd := make([dynamic]string)
-	append(&cmd, "glslangValidator")
-	when ODIN_DEBUG do append(&cmd, debugLine)
-	if stage != .compute {
+	defer delete(cmd)
 
-
-		stageAbbreviated := stage == .vertex ? "vert" : "frag"
-		_, _ = append_elem(&cmd, "-S")
-		_, _ = append_elem(&cmd, stageAbbreviated)
-
+	append(&cmd, "slangc")
+	when ODIN_DEBUG {
+		append(&cmd, "-g") // Include debug info
 	}
-	_, _ = append_elem(&cmd, "--target-env")
-	_, _ = append_elem(&cmd, "vulkan1.3")
-	if stage != .compute {
-		define := strings.to_upper(stageString)
-		_, _ = append_elem(&cmd, fmt.tprintf("-D%s", define))
+	append(&cmd, "-target", "spirv")
+	append(&cmd, "-entry", entryName)
+	append(&cmd, "-stage", stageString)
 
-	}
-	_, _ = append_elem(&cmd, "-o")
-
-
+	// Output path
+	outputName: string
 	if stage == .compute {
-		name, _ = strings.replace_all(name, ".comp", "")
+		// For compute shaders, remove ".comp" part if present
+		outputName = strings.clone(name, context.temp_allocator)
+		outputName, _ = strings.replace_all(outputName, ".comp", "")
+	} else {
+		outputName = name
 	}
 	outputPath, _ := filepath.join(
-		{dir, strings.join({name, stageString, ext}, ".")},
+		{dir, strings.join({outputName, stageString, ext}, ".")},
 		context.temp_allocator,
 	)
-	_, _ = append_elem(&cmd, outputPath)
-	_, _ = append_elem(&cmd, path)
+	append(&cmd, "-o", outputPath)
+
+	append(&cmd, path)
+
 	exec(cmd[:])
 }
 

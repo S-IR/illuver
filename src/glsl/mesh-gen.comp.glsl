@@ -131,12 +131,24 @@ uint hash31(vec3 p) {
 float hashFloat(vec3 p) {
     return float(hash31(p) & 0xFFFFu) * (1.0 / 65536.0) - 0.5;
 }
-vec3 jitter(vec3 worldPos) {
-    return vec3(hashFloat(worldPos), hashFloat(worldPos + vec3(1, 2, 3)), hashFloat(worldPos + vec3(3, 2, 1))) * 0.5;
+vec3 calculateJitter(ivec3 world) {
+    uint h = uint(world.x) * 0x9e3779b9u
+            + uint(world.y) * 0x85ebca6bu
+            + uint(world.z) * 0x27d4eb2du
+            + seed;
+
+    h = (h ^ (h >> 13)) * 0x9e3779b9u;
+
+    float fx = float(h & 0xFFFFu) * (1.0 / 65536.0) - 0.5;
+    float fy = float((h >> 16) & 0xFFFFu) * (1.0 / 65536.0) - 0.5;
+    float fz = float((h >> 24) & 0xFFu) * (1.0 / 256.0) - 0.5;
+
+    return vec3(fx, fy, fz) * 0.5;
 }
+
 vec3 worldPosition(ivec3 local) {
-    vec3 w = vec3(ivec3(chunkMin) + local);
-    return w + jitter(w);
+    ivec3 world = ivec3(chunkMin.xyz) + local;
+    return vec3(world) + calculateJitter(world);
 }
 
 const ivec3 triVerts[6][3] = {
