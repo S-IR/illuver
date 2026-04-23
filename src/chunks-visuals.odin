@@ -146,6 +146,7 @@ chunks_init :: proc(c: ^camera.Camera) {
 			&chunkWorkerStates[i].computeFence,
 		)
 
+
 	}
 	for i in 0 ..< gs.NUM_CORES - 1 {
 		idx := new(int, WorldAllocator)
@@ -226,6 +227,8 @@ MAX_POINTS_INT :: int(MAX_POINTS)
 MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
 MAX_COLORS :: MAX_INDICES
 INDEX_TYPE_USED_IN_CHUNKS :: u32
+CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_POINTS * size_of([3]f32) * 3
+CHUNK_GPU_COLOR_BUFFER_SIZE :: MAX_COLORS * size_of([4]f32)
 
 when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	render_chunk_init :: VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_chunk_init
@@ -503,13 +506,8 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						vkh.allocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
-							size = vk.DeviceSize(MAX_INDICES * size_of([3]f32)),
-							usage = {
-								.VERTEX_BUFFER,
-								.TRANSFER_DST,
-								.TRANSFER_SRC,
-								.STORAGE_BUFFER,
-							},
+							size = vk.DeviceSize(CHUNK_GPU_VERTEX_BUFFER_SIZE),
+							usage = {.VERTEX_BUFFER, .TRANSFER_DST},
 						},
 						{
 							flags = {.Host_Access_Sequential_Write, .Mapped},
@@ -528,8 +526,8 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						vkh.allocator,
 						{
 							sType = .BUFFER_CREATE_INFO,
-							size = vk.DeviceSize(MAX_COLORS * size_of([4]f32)),
-							usage = {.STORAGE_BUFFER, .TRANSFER_DST, .TRANSFER_SRC},
+							size = vk.DeviceSize(CHUNK_GPU_COLOR_BUFFER_SIZE),
+							usage = {.STORAGE_BUFFER, .TRANSFER_DST},
 						},
 						{
 							required_flags = {.HOST_VISIBLE},
@@ -639,6 +637,7 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	U32_INVALID :: u32(0xFFFFFFFF)
 
 	chunk_create_gpu_geometry :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, frameIndex: u32) {
+		tracy.Zone()
 		chunk_generate_gpu(chunk, state, computeMeshPipeline)
 		chunk_copy_current_to_other_frames(chunk, state, frameIndex)
 
@@ -792,6 +791,8 @@ chunks_draw :: proc(
 				vk.WaitSemaphores(vkh.device, &waitInfo, max(u64))
 				chunk.copyTimelineValue[vkh.frameIndex] = 0
 			}
+
+
 			assert(chunk.buffers.vertices[vkh.frameIndex].alloc != {})
 			vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
 			vertexOffset := vk.DeviceSize(0)
@@ -879,6 +880,8 @@ chunks_destroy :: proc() {
 			vk.WaitForFences(vkh.device, 1, &workerState.computeFence, true, max(u64))
 			vk.DestroyFence(vkh.device, workerState.computeFence, nil)
 		}
+
+
 	}
 	vmem.arena_destroy(&WorldArena)
 

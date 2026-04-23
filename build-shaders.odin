@@ -46,10 +46,16 @@ main :: proc() {
 			{outputDir, dirOfRelativePath},
 			context.temp_allocator,
 		)
+		isCompute := strings.contains(file.fullpath, ".comp.")
 
 		if SPIRV {
-			compile_shader(file.fullpath, actualOutputPath, "spv", .vertex)
-			compile_shader(file.fullpath, actualOutputPath, "spv", .fragment)
+			if isCompute {
+				compile_shader(file.fullpath, actualOutputPath, "spv", .compute)
+			} else {
+				compile_shader(file.fullpath, actualOutputPath, "spv", .vertex)
+				compile_shader(file.fullpath, actualOutputPath, "spv", .fragment)
+
+			}
 		}
 
 	}
@@ -58,25 +64,40 @@ main :: proc() {
 compile_shader :: proc(path, dir, ext: string, stage: enum {
 		vertex,
 		fragment,
+		compute,
 	}) {
 	name := strings.trim_suffix(filepath.base(path), ".glsl")
-	stageString := stage == .vertex ? "vertex" : "fragment"
-	stageAbbreviated := stage == .vertex ? "vert" : "frag"
 
-	define := strings.to_upper(stageString)
+
 	when ODIN_DEBUG do debugLine :: "-gVS"
-
+	stageString, ok := fmt.enum_value_to_string(stage)
+	ensure(ok)
 
 	os.make_directory_all(dir)
 	cmd := make([dynamic]string)
 	append(&cmd, "glslangValidator")
 	when ODIN_DEBUG do append(&cmd, debugLine)
-	_, _ = append_elem(&cmd, "-S")
-	_, _ = append_elem(&cmd, stageAbbreviated)
+	if stage != .compute {
+
+
+		stageAbbreviated := stage == .vertex ? "vert" : "frag"
+		_, _ = append_elem(&cmd, "-S")
+		_, _ = append_elem(&cmd, stageAbbreviated)
+
+	}
 	_, _ = append_elem(&cmd, "--target-env")
 	_, _ = append_elem(&cmd, "vulkan1.3")
-	_, _ = append_elem(&cmd, fmt.tprintf("-D%s", define))
+	if stage != .compute {
+		define := strings.to_upper(stageString)
+		_, _ = append_elem(&cmd, fmt.tprintf("-D%s", define))
+
+	}
 	_, _ = append_elem(&cmd, "-o")
+
+
+	if stage == .compute {
+		name, _ = strings.replace_all(name, ".comp", "")
+	}
 	outputPath, _ := filepath.join(
 		{dir, strings.join({name, stageString, ext}, ".")},
 		context.temp_allocator,
