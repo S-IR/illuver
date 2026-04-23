@@ -362,6 +362,7 @@ main :: proc() {
 			}
 			loading_screen_render(font, {uiPipeline = &uiPipeline})
 		case .Game:
+			sdl_ensure(sdl.HideCursor())
 			ticksToDo: bit_set[EnergyType] = {}
 			if time.tick_since(gs.LastLifeTick) >= gs.LifeInterval {
 				ticksToDo += {.Life}

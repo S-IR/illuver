@@ -367,6 +367,7 @@ chunk_copy_current_to_other_frames :: proc(
 	state: ^ChunkWorkerState,
 	currentFrame: u32,
 ) {
+	assert(chunk.totalPoints > 0)
 	vk.ResetCommandBuffer(state.computeCB, {})
 	vk.BeginCommandBuffer(
 		state.computeCB,

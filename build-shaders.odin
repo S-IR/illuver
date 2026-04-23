@@ -89,9 +89,7 @@ compile_shader :: proc(path, dir, ext: string, stage: enum {
 	defer delete(cmd)
 
 	append(&cmd, "slangc")
-	when ODIN_DEBUG {
-		append(&cmd, "-g") // Include debug info
-	}
+
 	append(&cmd, "-target", "spirv")
 	append(&cmd, "-entry", entryName)
 	append(&cmd, "-stage", stageString)
@@ -110,7 +108,11 @@ compile_shader :: proc(path, dir, ext: string, stage: enum {
 		context.temp_allocator,
 	)
 	append(&cmd, "-o", outputPath)
-
+	when ODIN_DEBUG {
+		append(&cmd, "-g") // Include debug info
+	} else {
+		append(&cmd, "-O3") // Include debug info
+	}
 	append(&cmd, path)
 
 	exec(cmd[:])

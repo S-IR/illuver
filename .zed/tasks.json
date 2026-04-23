@@ -1,7 +1,7 @@
 [
   {
     "label": "build-prod",
-    "command": "odin build src -out:build/prod.exe  -vet-shadowing -o:speed",
+    "command": "odin build src -out:build/prod.exe  -vet-shadowing -o:aggressive",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "reveal": "always",
