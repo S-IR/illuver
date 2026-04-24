@@ -76,22 +76,26 @@ get_biome_selector :: proc(x, y, z: i32, seed: u64) -> f32 {
 inv255 :: 1.0 / 255.0
 when !VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	procedural_point_type :: proc(
+		points: ^[MAX_POINTS]u16,
 		weights: BiomeWeights,
-		x, y, z: i32,
+		worldXYZ: [3]i32,
+		index: [3]i32,
 		topY: i32,
 		seed: u64,
-	) -> u16 {
-		selector := get_biome_selector(x, y, z, seed)
+	) {
+		if points[index_into_point_arrays(index)] != 0 do return
+
+		selector := get_biome_selector(index.x, index.y, index.z, seed)
 		cumulator: f32 = 0
 		for weight, biome in weights {
 			if weight < MIN_BIOME_WEIGHT_TO_NOT_IGNORE do continue
 			prob := f32(weight) * inv255
 			cumulator += prob
 			if selector < cumulator {
-				return biome_point(biome, x, y, z, topY, seed)
+				biome_point(points, biome, worldXYZ, index, topY, seed)
+				return
 			}
 		}
-		return 0
 	}
 }
 

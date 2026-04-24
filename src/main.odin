@@ -58,7 +58,7 @@ when ODIN_DEBUG && ENABLE_SPALL {
 }
 TRACY_ENABLE :: true
 
-DEBUG_MODE_IGNORE_SAVE :: false && ODIN_DEBUG
+DEBUG_MODE_IGNORE_SAVE :: true && ODIN_DEBUG
 main :: proc() {
 
 	when TRACY_ENABLE {
@@ -235,7 +235,6 @@ main :: proc() {
 	chunks_init_worker_thread :: proc(t: ^thread.Thread) {
 		chunks_destroy()
 
-
 		chunks_init(&camera.curr)
 		energyTickNow := time.tick_now()
 		gs.LastLifeTick = energyTickNow
@@ -249,6 +248,7 @@ main :: proc() {
 		tracy.FrameMark()
 		tracy.Plot("Test", f64(time.now()._nsec))
 		defer free_all(context.temp_allocator)
+
 		defer {
 			frameEnd := time.now()
 			frameDuration := time.diff(frameEnd, lastFrameTime)
@@ -261,6 +261,7 @@ main :: proc() {
 		defer {
 			prevScreenWidth, prevScreenHeight = gs.screenWidth, gs.screenHeight
 		}
+
 		pressedRightClickThisFrame := false
 		for sdl.PollEvent(&e) {
 
@@ -276,6 +277,10 @@ main :: proc() {
 				switch e.key.key {
 				case sdl.K_ESCAPE:
 					gs.quit = true
+				case sdl.K_F4:
+					if gs.CurrGameScreen == .Game {
+						camera.creativeModeOn = !camera.creativeModeOn
+					}
 				case sdl.K_1:
 					spellbar_select(&inventory, 0)
 				case sdl.K_2:
@@ -349,7 +354,7 @@ main :: proc() {
 				assert(userInfoFileHandle != nil)
 
 				if !foundExisting {
-					camera.curr = camera.Camera_new(pos = {0, 0, -2}, front = {0, 0, 1})
+					camera.curr = camera.Camera_new(pos = {0, 5, -2}, front = {0, 0, 1})
 				} else {
 					camera.curr = existingInfo.currCamera
 					inventory.data = existingInfo.inventoryData
@@ -364,32 +369,32 @@ main :: proc() {
 		case .Game:
 			sdl_ensure(sdl.HideCursor())
 			ticksToDo: bit_set[EnergyType] = {}
-			if time.tick_since(gs.LastLifeTick) >= gs.LifeInterval {
-				ticksToDo += {.Life}
-				// energy_tick({.Life})
-			}
+			// if time.tick_since(gs.LastLifeTick) >= gs.LifeInterval {
+			// 	ticksToDo += {.Life}
+			// 	// energy_tick({.Life})
+			// }
 
-			if time.tick_since(gs.LastWisdomTick) >= gs.WisdomInterval {
-				ticksToDo += {.Wisdom}
-				// energy_tick({.Wisdom})
-			}
+			// if time.tick_since(gs.LastWisdomTick) >= gs.WisdomInterval {
+			// 	ticksToDo += {.Wisdom}
+			// 	// energy_tick({.Wisdom})
+			// }
 
-			if time.tick_since(gs.LastLightTick) >= gs.LightInterval {
-				ticksToDo += {.Light}
-				// energy_tick({.Light})
-			}
-			if ticksToDo != {} {
-				energy_tick(ticksToDo)
-				if .Light in ticksToDo {
-					gs.LastLightTick = time.tick_now()
-				}
-				if .Wisdom in ticksToDo {
-					gs.LastWisdomTick = time.tick_now()
-				}
-				if .Life in ticksToDo {
-					gs.LastLifeTick = time.tick_now()
-				}
-			}
+			// if time.tick_since(gs.LastLightTick) >= gs.LightInterval {
+			// 	ticksToDo += {.Light}
+			// 	// energy_tick({.Light})
+			// }
+			// if ticksToDo != {} {
+			// 	energy_tick(ticksToDo)
+			// 	if .Light in ticksToDo {
+			// 		gs.LastLightTick = time.tick_now()
+			// 	}
+			// 	if .Wisdom in ticksToDo {
+			// 		gs.LastWisdomTick = time.tick_now()
+			// 	}
+			// 	if .Life in ticksToDo {
+			// 		gs.LastLifeTick = time.tick_now()
+			// 	}
+			// }
 			camera.Camera_assert(&camera.curr)
 			game_render(
 				&camera.curr,
@@ -436,7 +441,7 @@ game_render :: proc(
 		userInfoFileHandle,
 		&{inventoryData = inventory.data, currCamera = currCamera^},
 	)
-	camera.camera_process_keyboard_movement(currCamera)
+	camera.camera_process_keyboard_movement(currCamera, 0.0)
 
 	chunks_frame_update(currCamera)
 	// chunks_shift_per_player_movement(&camera)

@@ -252,3 +252,181 @@ get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) 
 
 	return chunk.points[index_into_point_arrays(localXYZ)]
 }
+MAX_WALKABLE_SLOPE :: f32(0.6)
+
+// TerrainSample :: struct {
+// 	height:   f32, // world Y at camera XZ
+// 	normal:   [3]f32, // surface normal of triangle below
+// 	slopeCos: f32, // dot(normal, UP) — 1.0 = flat, 0.0 = vertical
+// 	walkable: bool, // slope_cos above threshold
+// }
+sample_terrain_below :: proc(c: ^camera.Camera) {
+
+
+	camWorldCoord := [2]i32{i32(math.floor(c.pos.x)), i32(math.floor(c.pos.z))}
+
+	chunk := &RenderedChunks[CHUNKS_PER_DIRECTION / 2][CHUNKS_PER_DIRECTION / 2]
+	when ODIN_DEBUG {
+		goodX := localCoord[0] >= 0 && localCoord[0] < CHUNK_STRIDE
+		goodZ := localCoord[1] >= 0 && localCoord[1] < CHUNK_STRIDE
+		assert(goodZ)
+		assert(goodX)
+	}
+	worldGridPosF32 := linalg.round(c.pos)
+	worldGridPos := linalg.to_i32(worldGridPosF32)
+
+	localCoordsInChunk := worldGridPos - [3]i32{chunk.pos[0], MIN_Y, chunk.pos[1]}
+
+
+	floorYIndex: i32 = MIN_Y
+	for iter: i32 = i32(math.floor(c.pos.y)); iter >= i32(MIN_Y); iter -= 1 {
+		y := iter - MIN_Y
+		assert(y >= 0 && y < i32(VERTS_PER_Y_DIR))
+
+		if chunk.points[index_into_point_arrays(localCoordsInChunk.x, y, localCoordsInChunk.z)] !=
+		   0 {
+			floorYIndex = y
+			break
+		}
+
+	}
+	belowPointWorldPos := local_index_to_world_pos(
+		chunk.pos,
+		[3]i32{localCoordsInChunk.x, floorYIndex, localCoordsInChunk.z},
+	)
+
+
+	when ODIN_DEBUG {
+		assert(c.pos.y - belowPointWorldPos.y > camera.PLAYER_SIZE)
+	}
+
+	areWeOnPlusX := c.pos.x - belowPointWorldPos.x > 0
+	areWeOnPlusZ := c.pos.z - belowPointWorldPos.z > 0
+
+
+	chunkOffsetForX := 0
+	if areWeOnPlusX && localCoordsInChunk.x + 1 >= VERTS_PER_X_DIR do chunkOffsetForX = 1
+	if !areWeOnPlusX && localCoordsInChunk.x - 1 < 0 do chunkOffsetForX = -1
+
+	chunkOffsetForZ := 0
+	if areWeOnPlusZ && localCoordsInChunk.z + 1 >= VERTS_PER_Z_DIR do chunkOffsetForZ = 1
+	if !areWeOnPlusZ && localCoordsInChunk.z - 1 < 0 do chunkOffsetForZ = -1
+
+	corner2Chunk := &RenderedChunks[(CHUNKS_PER_DIRECTION / 2) + chunkOffsetForX][CHUNKS_PER_DIRECTION / 2]
+	corner3Chunk := &RenderedChunks[(CHUNKS_PER_DIRECTION / 2)][(CHUNKS_PER_DIRECTION / 2) + chunkOffsetForZ]
+	corner4Chunk := &RenderedChunks[(CHUNKS_PER_DIRECTION / 2) + chunkOffsetForX][(CHUNKS_PER_DIRECTION / 2) + chunkOffsetForZ]
+
+	corner1 := belowPointWorldPos
+	corner2, corner3, corner4: [3]f32
+
+	get_closest_point_in_grid :: proc(chunk: ^Chunk, gridCoord: [3]i32) -> (res: [3]i32) {
+		assert(gridCoord.x >= 0 && gridCoord.x < VERTS_PER_X_DIR)
+		assert(gridCoord.y >= 0 && gridCoord.y < VERTS_PER_Y_DIR)
+		assert(gridCoord.z >= 0 && gridCoord.z < VERTS_PER_Z_DIR)
+
+		closestBorderY: i32 = MIN_Y
+		if MAX_Y - 1 - gridCoord.y < MIN_Y - gridCoord.y {
+			closestBorderY = MAX_Y - 1
+		}
+		for i: i32 = 0; (gridCoord.y + i < MAX_Y) || (gridCoord.y - i > MIN_Y); i += 1 {
+			reachedTop := gridCoord.y + i >= MAX_Y
+			reachedBottom := gridCoord.y - i <= MIN_Y
+			topPoint, bottomPoint: u16
+
+			topCoords := [3]i32{gridCoord.x, gridCoord.y + i, gridCoord.z}
+			bottomCoords := [3]i32{gridCoord.x, gridCoord.y - i, gridCoord.z}
+			if !reachedTop do topPoint = chunk.points[index_into_point_arrays(topCoords)]
+			if !reachedBottom do bottomPoint = chunk.points[index_into_point_arrays(bottomCoords)]
+
+			foundTop := !reachedTop && topPoint != 0
+			foundBottom := !reachedBottom && bottomPoint != 0
+
+			if foundTop {
+				res = topCoords
+				if reachedBottom do return res
+			}
+
+			if foundBottom {
+				res = bottomCoords
+				if reachedTop do return res
+			}
+			if foundTop && foundBottom {
+				topRealPos := local_index_to_world_pos(chunk.pos, topCoords)
+				bottomRealPos := local_index_to_world_pos(chunk.pos, bottomCoords)
+				startPointRealPos := local_index_to_world_pos(chunk.pos, gridCoord)
+
+				diffTop := topRealPos.y - startPointRealPos.y
+				diffBottom := startPointRealPos.y - bottomRealPos.y
+
+				topIsSmaller := diffTop < diffBottom
+				if topIsSmaller {
+					return topCoords
+				} else {
+					return bottomCoords
+				}
+
+			}
+
+		}
+		return {gridCoord.x, closestBorderY, gridCoord.z}
+
+	}
+
+	{
+		offsetForX: i32 = 1 if areWeOnPlusX else -1
+		offsetForZ: i32 = 1 if areWeOnPlusZ else -1
+
+		corner2LocalCoord := localCoordsInChunk + {offsetForX, 0, 0}
+		corner2LocalCoord.x /= VERTS_PER_X_DIR
+		corner2 = local_index_to_world_pos(
+			corner2Chunk.pos,
+			get_closest_point_in_grid(corner2Chunk, corner2LocalCoord),
+		)
+
+
+		corner3LocalCoord := localCoordsInChunk + {0, 0, offsetForZ}
+		corner3LocalCoord.z /= VERTS_PER_Z_DIR
+		corner3 = local_index_to_world_pos(
+			corner3Chunk.pos,
+			get_closest_point_in_grid(corner3Chunk, corner3LocalCoord),
+		)
+
+
+		corner4LocalCoord := localCoordsInChunk + {offsetForX, 0, offsetForZ}
+		corner4LocalCoord.z /= VERTS_PER_Z_DIR
+		corner4LocalCoord.x /= VERTS_PER_X_DIR
+		corner4 = local_index_to_world_pos(
+			corner4Chunk.pos,
+			get_closest_point_in_grid(corner4Chunk, corner4LocalCoord),
+		)
+
+
+	}
+	point_in_triangle_xz :: proc(p, a, b, c: [3]f32) -> bool {
+		cross :: proc(a, b: [2]f32) -> f32 {return a.x * b.y - a.y * b.x}
+
+		d1 := cross(p.xz - a.xz, b.xz - a.xz)
+		d2 := cross(p.xz - b.xz, c.xz - b.xz)
+		d3 := cross(p.xz - c.xz, a.xz - c.xz)
+
+		hasNeg := (d1 < 0) || (d2 < 0) || (d3 < 0)
+		hasPos := (d1 > 0) || (d2 > 0) || (d3 > 0)
+		return !(hasNeg || hasPos)
+	}
+
+	a, b, cc_: [3]f32
+	if point_in_triangle_xz(c.pos, corner1, corner2, corner3) {
+		a, b, cc_ = corner1, corner2, corner3
+	} else {
+		a, b, cc_ = corner4, corner2, corner3
+	}
+
+	edge1 := b - a
+	edge2 := c - a
+	normal := linalg.normalize(linalg.cross(edge1, edge2))
+	if normal.y < 0 do normal = -normal
+	height :=
+		corner1.y -
+		(normal.x * (c.pos.x - corner1.x) + normal.z * (c.pos.z - corner1.z)) / normal.y
+
+}

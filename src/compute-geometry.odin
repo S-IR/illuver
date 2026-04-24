@@ -375,7 +375,7 @@ chunk_copy_current_to_other_frames :: proc(
 	)
 
 	srcVert := chunk.buffers.compute.stagingVertices.buffer
-	copySizeVert := vk.DeviceSize(chunk.totalPoints * size_of([4]f32))
+	copySizeVert := vk.DeviceSize(CHUNK_GPU_VERTEX_BUFFER_SIZE)
 
 	barrierCount := 0
 	barriers: [vkh.MAX_FRAMES_IN_FLIGHT]vk.BufferMemoryBarrier

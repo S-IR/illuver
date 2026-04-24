@@ -1,3 +1,4 @@
+import "point.imported.slang";
 
 [[vk::binding(0, 0)]]
 ByteAddressBuffer pointsBuffer; // point types
@@ -20,26 +21,8 @@ static const int CUBES_PER_X_DIR = 15;
 static const int CUBES_PER_Y_DIR = 255;
 static const int CUBES_PER_Z_DIR = 15;
 static const int VERT_STRIDE_X = VERTS_PER_Z_DIR * VERTS_PER_Y_DIR;
+
 static const int VERT_STRIDE_Y = VERTS_PER_Z_DIR;
-
-static const uint TYPE_MASK = 1023u;
-static const uint ENERGY_MASK = 3u;
-static const uint LIGHT_SHIFT = 10;
-static const uint LIFE_SHIFT = 12;
-static const uint WISDOM_SHIFT = 14;
-
-enum PointType : uint16_t {
-  Air = 0,
-  YellowDirt = 1,
-  PurpleGround = 2,
-  LightPurpleGround = 3,
-  BlueDiamond = 4,
-  BlackCliff = 5,
-  PinkTrunk = 6,
-  WhiteTreeLeaf = 7,
-  Water = 8
-};
-
 uint16_t getPoint(int3 cell) {
   if (cell.x < 0 || cell.x >= VERTS_PER_X_DIR)
     return uint16_t(PointType::Air);
@@ -50,57 +33,6 @@ uint16_t getPoint(int3 cell) {
   uint idx = cell.x * VERT_STRIDE_X + cell.y * VERT_STRIDE_Y + cell.z;
   return pointsBuffer.Load<uint16_t>(idx * 2);
 }
-
-PointType getPointType(uint16_t p) { return PointType(uint(p) & TYPE_MASK); }
-uint getLight(uint16_t p) { return (uint(p) >> LIGHT_SHIFT) & ENERGY_MASK; }
-uint getLife(uint16_t p) { return (uint(p) >> LIFE_SHIFT) & ENERGY_MASK; }
-uint getWisdom(uint16_t p) { return (uint(p) >> WISDOM_SHIFT) & ENERGY_MASK; }
-
-float3 energyToColor(uint16_t p) {
-  float light = float(getLight(p)) / 3.0;
-  float life = float(getLife(p)) / 3.0;
-  float wisdom = float(getWisdom(p)) / 3.0;
-  return float3(light, light + life, wisdom);
-}
-
-float3 baseColor(PointType type) {
-  switch (type) {
-  case PointType::YellowDirt:
-    return float3(159, 112, 75) / 255.0;
-  case PointType::PurpleGround:
-    return float3(36, 19, 97) / 255.0;
-  case PointType::LightPurpleGround:
-    return float3(141, 97, 237) / 255.0;
-  case PointType::BlueDiamond:
-    return float3(0, 236, 231) / 255.0;
-  case PointType::BlackCliff:
-    return float3(31, 22, 25) / 255.0;
-  case PointType::PinkTrunk:
-    return float3(229, 108, 125) / 255.0;
-  case PointType::WhiteTreeLeaf:
-    return float3(218, 189, 252) / 255.0;
-  case PointType::Water:
-    return float3(68, 131, 129) / 255.0;
-  default:
-    return float3(0.0);
-  }
-}
-
-float4 triangleDecideColor(uint16_t p0, uint16_t p1, uint16_t p2) {
-  PointType types[3] = { getPointType(p0), getPointType(p1), getPointType(p2) };
-  uint16_t pts[3] = { p0, p1, p2 };
-  float3 finalColor = float3(0.0);
-  for (int i = 0; i < 3; i++) {
-    float3 base = baseColor(types[i]);
-    float3 energy = energyToColor(pts[i]);
-    float3 combined = base * 0.9 + energy * 0.1;
-    finalColor += combined;
-    // finalColor += baseColor(types[i]);
-  }
-  finalColor /= 3.0;
-  return float4(finalColor, 1.0);
-}
-
 float3 calculateJitter(int3 world) {
   uint h = uint(world.x) * 0x9e3779b9u + uint(world.y) * 0x85ebca6bu +
            uint(world.z) * 0x27d4eb2du + seed;
@@ -151,15 +83,24 @@ bool isSurrounded(int3 cell) {
 [numthreads(8, 8, 8)]
 void main(uint3 id: SV_DispatchThreadID) {
   int3 cell = int3(id);
+  // if (id.x == 0 && id.y == 0 && id.z == 0) {
+  //   // Store the first cell's point value into counter just to see it
+  //   counter.Store(0, uint(getPoint(int3(0, 0, 0))));
+  //   return; // then exit, to keep it simple
+  // }
+
   if (cell.x >= CUBES_PER_X_DIR || cell.y >= CUBES_PER_Y_DIR ||
       cell.z >= CUBES_PER_Z_DIR)
     return;
 
   uint16_t p000 = getPoint(cell);
-  if (getPointType(p000) == PointType::Air)
+  if (getPointType(p000) == PointType::Air) {
     return;
-  if (isSurrounded(cell))
+  }
+
+  if (isSurrounded(cell)) {
     return;
+  }
 
   for (int t = 0; t < 6; t++) {
     int3 v0 = triVerts[t][0];

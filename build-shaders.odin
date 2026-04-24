@@ -50,6 +50,8 @@ main :: proc() {
 
 		// Detect compute shader by ".comp." in filename (legacy convention)
 		isCompute := strings.contains(file.fullpath, ".comp.")
+		isImported := strings.contains(file.fullpath, ".imported.")
+		if isImported do continue
 
 		if SPIRV {
 			if isCompute {
@@ -107,6 +109,8 @@ compile_shader :: proc(path, dir, ext: string, stage: enum {
 		{dir, strings.join({outputName, stageString, ext}, ".")},
 		context.temp_allocator,
 	)
+	append(&cmd, "-I", filepath.dir(path))
+
 	append(&cmd, "-o", outputPath)
 	when ODIN_DEBUG {
 		append(&cmd, "-g") // Include debug info

@@ -64,7 +64,7 @@ Chunk :: struct {
 	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
 	pos:               int2,
 	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
-	mutex:             sync.Mutex,
+	mutex:             sync.RW_Mutex,
 	totalPoints:       u32,
 	arena:             virtual.Arena,
 	alloc:             mem.Allocator,
@@ -77,7 +77,7 @@ Chunk :: struct {
 // }
 
 CHUNKS_PER_DIRECTION :: 5
-
+#assert(CHUNKS_PER_DIRECTION >= 3)
 ENERGY_TICKING_DIRECTION_LEN :: CHUNKS_PER_DIRECTION
 RenderedChunks := [CHUNKS_PER_DIRECTION][CHUNKS_PER_DIRECTION]Chunk{}
 
@@ -93,7 +93,7 @@ WorldAllocator := mem.Allocator{}
 
 chunks_init :: proc(c: ^camera.Camera) {
 	chunkShutdown = false
-	centerChunk := int2{i32(c.pos.x), i32(c.pos.z)} / CHUNK_SIZE
+	centerChunk := int2{i32(math.round(c.pos.x)), i32(math.round(c.pos.z))} / CHUNK_SIZE
 	half :: CHUNKS_PER_DIRECTION / 2
 
 
@@ -224,7 +224,7 @@ MAX_POINTS_INT :: int(MAX_POINTS)
 MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
 MAX_COLORS :: MAX_INDICES
 INDEX_TYPE_USED_IN_CHUNKS :: u32
-CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_POINTS * size_of([4]f32) * 3
+CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_INDICES * size_of([4]f32)
 
 when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	render_chunk_init :: VISUAL_REPRESENTATION_OF_NOISE_FN_RUN_chunk_init
@@ -572,16 +572,16 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 						y := yCoord - MIN_Y
 						idx := index_into_point_arrays(x, y, z)
 						worldXYZ := [3]i32{worldX, yCoord, worldZ}
-						pointVal := procedural_point_type(
+						procedural_point_type(
+							&chunk.points,
 							biomeWeights,
-							worldXYZ.x,
-							worldXYZ.y,
-							worldXYZ.z,
+							worldXYZ,
+							{x, y, z},
 							height,
 							gs.seed,
 						)
-						assert(is_valid_point_u16(pointVal))
-						chunk.points[idx] = pointVal
+						assert(is_valid_point_u16(chunk.points[index_into_point_arrays(x, y, z)]))
+						// chunk.points[idx] = pointVal
 
 					}
 				}
@@ -708,9 +708,23 @@ when VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 // 	}
 
 // }
-point_real_world_position :: #force_inline proc "contextless" (worldXYZ: [3]f32) -> [3]f32 {
+local_index_to_world_pos :: proc(chunkXZ: [2]i32, idx: [3]i32) -> [3]f32 {
+	return point_real_world_position([3]i32{chunkXZ[0], MIN_Y, chunkXZ[1]} + idx)
+}
+point_real_world_position_f32 :: #force_inline proc "contextless" (worldXYZ: [3]f32) -> [3]f32 {
 	// return worldXYZ
 	return worldXYZ + calculate_jitter(i32(worldXYZ.x), i32(worldXYZ.y), i32(worldXYZ.z), gs.seed)
+}
+point_real_world_position_i32 :: #force_inline proc "contextless" (worldXYZ: [3]i32) -> [3]f32 {
+	return(
+		[3]f32{f32(worldXYZ.x), f32(worldXYZ.y), f32(worldXYZ.z)} +
+		calculate_jitter(worldXYZ.x, worldXYZ.y, worldXYZ.z, gs.seed) \
+	)
+
+}
+point_real_world_position :: proc {
+	point_real_world_position_i32,
+	point_real_world_position_f32,
 }
 calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -> [3]f32 {
 	h := u32(x) * 0x9e3779b9 + u32(y) * 0x85ebca6b + u32(z) * 0x27d4eb2d + u32(gs.seed)

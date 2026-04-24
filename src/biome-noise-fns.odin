@@ -12,117 +12,224 @@ make_point :: #force_inline proc(pt: PointType, light, life, wisdom: u16) -> u16
 
 
 biome_point_type :: #force_inline proc(
+	points: ^[MAX_POINTS]u16,
 	biome: Biome,
-	x, y, z: i32,
+	worldXYZ, index: [3]i32,
 	topY: i32,
 	seed: u64,
-) -> PointType {
+) {
 	switch biome {
 	case .Crystalbloom:
-		return crystalbloom_point_type(x, y, z, topY, seed)
-
+		crystalbloom_point_type(points, worldXYZ, index, topY, seed)
+		return
 	case .Gorglai:
-		return gorglai_point_type(x, y, z, seed)
-
+		gorglai_point_type(points, worldXYZ, index, seed)
+		return
 
 	case .Arakholm:
-		return arakholm_point_type(x, y, z, seed)
-
+		arakholm_point_type(points, worldXYZ, index, seed)
+		return
 
 	case .Merplia:
-		return merplia_point_type(x, y, z, seed)
-
+		merplia_point_type(points, worldXYZ, index, seed)
+		return
 
 	case .Wintercrown:
-		return wintercrown_point_type(x, y, z, seed)
-
+		wintercrown_point_type(points, worldXYZ, index, seed)
+		return
 
 	case .Scholathorn:
-		return scholathorn_point_type(x, y, z, seed)
-
+		scholathorn_point_type(points, worldXYZ, index, seed)
+		return
 
 	case .Adwaron:
-		return adwaron_point_type(x, y, z, seed)
-
+		adwaron_point_type(points, worldXYZ, index, seed)
+		return
 
 	case .Etherwind:
-		return etherwind_point_type(x, y, z, seed)
-
+		etherwind_point_type(points, worldXYZ, index, seed)
+		return
 	}
 	unreachable()
 }
-CRYSTALBLOOM_TOP_COVER_LAYER_SIZE :: 6
-crystalbloom_point_type :: proc(x, y, z: i32, topY: i32, seed: u64) -> PointType {
-	// tunnel := algorithms.fbm_3d(f64(x) * .02, f64(y) * .005, f64(z) * .02, seed, 2, .5, .5)
-	diffY := topY - y
+CRYSTALBLOOM_GRASS_DEPTH :: 2
+CRYSTALBLOOM_LOAM_DEPTH :: 5
+CRYSTALBLOOM_MID_DEPTH :: 45
 
-	// if diffY < CRYSTALBLOOM_TOP_COVER_LAYER_SIZE {
-	// return .LightPurpleGround
-	SCALE :: 0.002
-	noise := algorithms.ridged_fbm_2d(f64(x) * SCALE, f64(z) * SCALE, seed, 3, 4, 1.1)
-	if noise < 0.1 do return .LightPurpleGround
-	if noise < 0.3 do return .PurpleGround
-	if noise < 0.35 do return .BlackCliff
-	// return .YellowDirt
-	// }
-	return .YellowDirt
+CRYSTALBLOOM_SHARD_WALL :: 0.06
+CRYSTALBLOOM_COLOSSAL_WALL :: 0.05
+
+crystalbloom_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
+	diffY := topY - worldXYZ.y
+
+
+	inMidZone := diffY < CRYSTALBLOOM_MID_DEPTH
+
+	if !inMidZone {
+		noise := algorithms.fbm_3d(
+			f64(worldXYZ.x),
+			f64(worldXYZ.y),
+			f64(worldXYZ.z),
+			seed + 0x864,
+			2,
+			.5,
+			.5,
+		)
+		if noise > 0.78 {
+			points[index_into_point_arrays(index)] = u16(PointType.BlueDiamond)
+			return
+		} else if noise > 0.72 {
+			points[index_into_point_arrays(index)] = u16(PointType.BlackCliff)
+			return
+		} else if noise > 0.68 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		} else {
+			points[index_into_point_arrays(index)] = u16(PointType.CrystalTrunk)
+			return
+
+		}
+
+	}
+	// --- Vertical shafts: punch columns from just below loam down into mid zone ---
+	// 2D noise so the shaft is consistent across the full Y column
+	if inMidZone {
+		SHAFT_SCALE :: 0.018
+		shaft := algorithms.fbm_2d(
+			f64(worldXYZ.x) * SHAFT_SCALE,
+			f64(worldXYZ.z) * SHAFT_SCALE,
+			seed + 0x5AFE,
+			2,
+			2.0,
+			0.5,
+		)
+		// shaft > 0.78 = open air column
+		// shaft > 0.72 = shard wall lining the shaft
+		if shaft > 0.78 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		}
+		if shaft > 0.72 {
+			points[index_into_point_arrays(index)] = u16(PointType.SharditeMineral)
+			return
+		}
+	}
+
+	// --- Mid zone horizontal corridors ---
+	if inMidZone {
+		CORRIDOR_SCALE_XZ :: 0.025
+		CORRIDOR_SCALE_Y :: 0.008 // very stretched vertically = flat corridors
+		corridor := algorithms.fbm_3d(
+			f64(worldXYZ.x) * CORRIDOR_SCALE_XZ,
+			f64(worldXYZ.y) * CORRIDOR_SCALE_Y,
+			f64(worldXYZ.z) * CORRIDOR_SCALE_XZ,
+			seed + 0xACAD,
+			3,
+			2.0,
+			0.5,
+		)
+		if corridor > 0.72 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		}
+		if corridor > 0.66 {
+			points[index_into_point_arrays(index)] = u16(PointType.SharditeMineral)
+			return
+		}
+		points[index_into_point_arrays(index)] = u16(PointType.VeilStone)
+		return
+	}
+
+	// --- Deep zone horizontal corridors ---
+	{
+		CORRIDOR_SCALE_XZ :: 0.02
+		CORRIDOR_SCALE_Y :: 0.006
+		corridor := algorithms.fbm_3d(
+			f64(worldXYZ.x) * CORRIDOR_SCALE_XZ,
+			f64(worldXYZ.y) * CORRIDOR_SCALE_Y,
+			f64(worldXYZ.z) * CORRIDOR_SCALE_XZ,
+			seed + 0x1234,
+			3,
+			2.0,
+			0.45,
+		)
+		if corridor > 0.70 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		}
+		if corridor > 0.65 {
+			points[index_into_point_arrays(index)] = u16(PointType.SharditeMineral)
+			return
+		}
+		points[index_into_point_arrays(index)] = u16(PointType.AbyssStone)
+		return
+	}
 }
 
-gorglai_point_type :: proc(x, y, z: i32, seed: u64) -> PointType {
+gorglai_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
 	//todo
-	return .Water
+	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
-arakholm_point_type :: proc(x, y, z: i32, seed: u64) -> PointType {
+arakholm_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
 	//todo
-	return .Water
+	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
-merplia_point_type :: proc(x, y, z: i32, seed: u64) -> PointType {
+merplia_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
 	//todo
-	return .Water
+	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
-wintercrown_point_type :: proc(x, y, z: i32, seed: u64) -> PointType {
+wintercrown_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
 	//todo
-	return .Water
-}
-
-scholathorn_point_type :: proc(x, y, z: i32, seed: u64) -> PointType {
-	//todo
-	return .Water
-}
-adwaron_point_type :: proc(x, y, z: i32, seed: u64) -> PointType {
-	//todo
-	return .Water
+	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
 
-etherwind_point_type :: proc(x, y, z: i32, seed: u64) -> PointType {
+scholathorn_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
 	//todo
-	return .Water
+	points[index_into_point_arrays(index)] = u16(PointType.Water)
+}
+adwaron_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+	//todo
+	points[index_into_point_arrays(index)] = u16(PointType.Water)
+}
+
+etherwind_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+	//todo
+	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
 
 
 energy_from_noise :: #force_inline proc(
-	x, y, z: i32,
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
 	seed: u64,
 	biome: Biome,
-) -> (
-	light, life, wisdom: u16,
 ) {
 
-	n := procedural_point_type_noise_result(x, y, z, seed, biome)
+	n := procedural_point_type_noise_result(worldXYZ.x, worldXYZ.y, worldXYZ.z, seed, biome)
 
-	light = u16(math.clamp(int(n * 4.0), 0, 3))
-	life = u16(math.clamp(int((1.0 - n) * 4.0), 0, 3))
-	wisdom = u16(math.clamp(int(math.abs(n - 0.5) * 8.0), 0, 3))
-
-	return light, life, wisdom
+	light := u16(math.clamp(int(n * 4.0), 0, 3))
+	life := u16(math.clamp(int((1.0 - n) * 4.0), 0, 3))
+	wisdom := u16(math.clamp(int(math.abs(n - 0.5) * 8.0), 0, 3))
+	prev := u16_to_point_type(points[index_into_point_arrays(index)])
+	points[index_into_point_arrays(index)] = make_point(prev, light, life, wisdom)
 }
-biome_point :: #force_inline proc(biome: Biome, x, y, z: i32, topY: i32, seed: u64) -> u16 {
+biome_point :: #force_inline proc(
+	points: ^[MAX_POINTS]u16,
+	biome: Biome,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 
-	pt := biome_point_type(biome, x, y, z, topY, seed)
+	biome_point_type(points, biome, worldXYZ, index, topY, seed)
 
-	if pt == .Air do return 0
+	if points[index_into_point_arrays(index)] == 0 do return
 
-	light, life, wisdom := energy_from_noise(x, y, z, seed, biome)
+	energy_from_noise(points, worldXYZ, index, seed, biome)
 
-	return make_point(pt, light, life, wisdom)
 }

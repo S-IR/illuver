@@ -57,6 +57,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 	for {
 		sync.sema_wait(&chunkJobSema)
 		if chunkShutdown do break
+
 		sync.mutex_lock(&chunkJobMutex)
 		if len(chunkJobQueue) == 0 {
 			sync.mutex_unlock(&chunkJobMutex)
@@ -71,9 +72,8 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 		state.pos = job.pos
 
 		chunk := &RenderedChunks[state.xIdx][state.zIdx]
-		jobTypeStr, _ := fmt.enum_value_to_string(job.type)
-		sync.mutex_lock(&chunk.mutex)
 
+		sync.lock(&chunk.mutex)
 		switch v in job.type {
 		case EnergyTickJob:
 			tracy.Zone()
@@ -139,7 +139,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 			irrf_set_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
 			chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
 		}
-		sync.mutex_unlock(&chunk.mutex)
+		sync.unlock(&chunk.mutex)
 		sync.wait_group_done(&chunkWorkersWG)
 	}
 }

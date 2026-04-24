@@ -22,7 +22,7 @@ DEFAULT_SENSITIVITY: f32 = 0.2
 
 
 WORLD_UP :: [3]f32{0, 1, 0}
-
+PLAYER_SIZE: f32 : 1.83
 Camera :: struct {
 	pos:              [3]f32,
 	front:            [3]f32,
@@ -33,6 +33,8 @@ Camera :: struct {
 	movementSpeed:    f32,
 	mouseSensitivity: f32,
 	fov:              f32,
+	jumpVelocity:     f32,
+	isGrounded:       bool,
 }
 
 Camera_new :: proc(
@@ -56,7 +58,9 @@ Camera_new :: proc(
 	Camera_rotate(&c)
 	return c
 }
-camera_process_keyboard_movement :: proc(c: ^Camera) {
+creativeModeOn: bool
+JUMP_FORCE: f32 : 12.0
+camera_process_keyboard_movement :: proc(c: ^Camera, below: f32) {
 	keys := sdl.GetKeyboardState(nil)
 
 	movementVector: [3]f32 = {}
@@ -75,19 +79,36 @@ camera_process_keyboard_movement :: proc(c: ^Camera) {
 	if keys[sdl.Scancode.D] != false {
 		movementVector += normalizedRight
 	}
+	if creativeModeOn {
+		if keys[sdl.Scancode.SPACE] != false {
+			movementVector += WORLD_UP
+		}
+		if keys[sdl.Scancode.LALT] != false || keys[sdl.Scancode.RALT] != false {
+			movementVector -= WORLD_UP
+		}
 
-	if keys[sdl.Scancode.SPACE] != false {
-		movementVector += WORLD_UP
+	} else {
+		if keys[sdl.Scancode.SPACE] != false && c.isGrounded {
+			c.jumpVelocity = JUMP_FORCE
+			c.isGrounded = false
+		}
+		c.jumpVelocity -= gs.GRAVITY * f32(gs.dt)
+		c.pos.y += c.jumpVelocity * f32(gs.dt)
+
+		if c.pos.y < below {
+			c.pos.y = below
+			c.jumpVelocity = 0
+			c.isGrounded = true
+		}
 	}
-	if keys[sdl.Scancode.LALT] != false || keys[sdl.Scancode.RALT] != false {
-		movementVector -= WORLD_UP
-	}
+
 
 	if linalg.length(movementVector) <= 0 do return
 
 	delta := linalg.normalize(movementVector) * c.movementSpeed * f32(gs.dt)
 	// fmt.println("movementVector", movementVector)
 	c.pos += delta
+
 }
 Camera_process_mouse_movement :: proc(c: ^Camera, received_xOffset, received_yOffset: f32) {
 	xOffset := received_xOffset * c.mouseSensitivity

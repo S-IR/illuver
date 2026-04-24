@@ -85,27 +85,25 @@ PointType :: enum u16 {
 	PinkTrunk,
 	WhiteTreeLeaf,
 	Water,
+	GlassGrass, // yellowish surface crust, slightly luminous
+	VoidLoam, // dark dirt just under the surface
+	VeilStone, // barrier stone 1 — slate blue-gray, mid depth
+	AbyssStone, // barrier stone 2 — near-black green, deep zone
+
+	// Crystalbloom cave minerals
+	SharditeMineral, // small-medium crystal stalactite material, icy blue
+	ColossalShard, // huge stalactite mineral, deeper teal, rarer clusters
+
+	// Trees — types defined here, placed by ornament pass
+	AshwoodTrunk, // darkened gray tree
+	AshwoodLeaf,
+	UmbraTrunk, // very dark tree, almost black
+	UmbraLeaf,
+	CrystalTrunk, // crystal tree
+	CrystalLeaf,
 }
 #assert(len(PointType) < 1024)
 
-Random_Colors_Per_Point_Type := [PointType][4]f32 {
-	.Air               = {},
-	.YellowDirt        = {159.0 / 255.0, 112.0 / 255.0, 75.0 / 255.0, 1},
-	.PurpleGround      = {36.0 / 255.0, 19.0 / 255.0, 97.0 / 255.0, 1},
-	// .LightPurpleGround = {
-	// 	{0, 0, 0, 1},
-	// 	{0, 1, 0, 1},
-	// 	{1, 0, 0, 1},
-	// 	{1, 1, 0, 1},
-	// 	{1, 1, 1, 1},
-	// },
-	.LightPurpleGround = {141.0 / 255.0, 97.0 / 255.0, 237.0 / 255.0, 1},
-	.BlueDiamond       = {0.0 / 255.0, 236.0 / 255.0, 231.0 / 255.0, 1},
-	.BlackCliff        = {31.0 / 255.0, 22.0 / 255.0, 25.0 / 255.0, 1},
-	.PinkTrunk         = {229.0 / 255.0, 108.0 / 255.0, 125.0 / 255.0, 1},
-	.WhiteTreeLeaf     = {218.0 / 255.0, 189.0 / 255.0, 252.0 / 255.0, 1},
-	.Water             = {68.0 / 255.0, 131.0 / 255.0, 129.0 / 255.0, 1},
-}
 BottomFacedIndices := [?]u16{0, 1, 2, 0, 2, 3}
 
 
@@ -314,36 +312,6 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 // 	return visibles
 // }
 
-triangle_decide_color :: proc "contextless" (points: [3]u16) -> [4]f32 {
-	// for p in points do assert(is_valid_point_u16(p) && p != 0)
-
-	pointTypes: [3]PointType
-	for p, i in points do pointTypes[i] = u16_to_point_type(p)
-	// assert(is_valid_point_u16())%
-	finalColor := [3]f32{0, 0, 0}
-
-	for i in 0 ..< 3 {
-		base := Random_Colors_Per_Point_Type[pointTypes[i]]
-
-		energy := energy_to_color(points[i])
-
-		combined := [3]f32 {
-			base[0] * 0.9 + energy[0] * 0.1,
-			base[1] * 0.9 + energy[1] * 0.1,
-			base[2] * 0.9 + energy[2] * 0.1,
-		}
-
-		finalColor[0] += combined[0]
-		finalColor[1] += combined[1]
-		finalColor[2] += combined[2]
-	}
-
-	finalColor[0] /= 3.0
-	finalColor[1] /= 3.0
-	finalColor[2] /= 3.0
-
-	return {finalColor[0], finalColor[1], finalColor[2], 1}
-}
 energy_to_color :: proc "contextless" (p: u16) -> [3]f32 {
 	light := f32(get_light(p)) / 3.0
 	life := f32(get_life(p)) / 3.0

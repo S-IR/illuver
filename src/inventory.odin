@@ -13,7 +13,7 @@ import "vkh"
 
 DEFAULT_BAG_SIZE :: 16
 // StartingBag :: [DEFAULT_BAG_SIZE]u16
-INVENTORY_SLOT_MAX_COUNT: u8 : 99
+INVENTORY_SLOT_MAX_COUNT: u8 : 255
 InventorySlot :: struct {
 	val:   PointType,
 	count: u8,

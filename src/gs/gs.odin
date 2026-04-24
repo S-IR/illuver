@@ -34,3 +34,4 @@ LightInterval :: time.Duration(2.3 * f64(time.Second))
 LastLifeTick: time.Tick
 LastWisdomTick: time.Tick
 LastLightTick: time.Tick
+GRAVITY :: f32(30.0)
