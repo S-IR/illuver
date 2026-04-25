@@ -23,41 +23,35 @@ biome_point_type :: #force_inline proc(
 		crystalbloom_point_type(points, worldXYZ, index, topY, seed)
 		return
 	case .Gorglai:
-		gorglai_point_type(points, worldXYZ, index, seed)
+		gorglai_point_type(points, worldXYZ, index, topY, seed)
 		return
 
 	case .Arakholm:
-		arakholm_point_type(points, worldXYZ, index, seed)
+		arakholm_point_type(points, worldXYZ, index, topY, seed)
 		return
 
 	case .Merplia:
-		merplia_point_type(points, worldXYZ, index, seed)
+		merplia_point_type(points, worldXYZ, index, topY, seed)
 		return
 
 	case .Wintercrown:
-		wintercrown_point_type(points, worldXYZ, index, seed)
+		wintercrown_point_type(points, worldXYZ, index, topY, seed)
 		return
 
 	case .Scholathorn:
-		scholathorn_point_type(points, worldXYZ, index, seed)
+		scholathorn_point_type(points, worldXYZ, index, topY, seed)
 		return
 
 	case .Adwaron:
-		adwaron_point_type(points, worldXYZ, index, seed)
+		adwaron_point_type(points, worldXYZ, index, topY, seed)
 		return
 
 	case .Etherwind:
-		etherwind_point_type(points, worldXYZ, index, seed)
+		etherwind_point_type(points, worldXYZ, index, topY, seed)
 		return
 	}
 	unreachable()
 }
-CRYSTALBLOOM_GRASS_DEPTH :: 2
-CRYSTALBLOOM_LOAM_DEPTH :: 5
-CRYSTALBLOOM_MID_DEPTH :: 45
-
-CRYSTALBLOOM_SHARD_WALL :: 0.06
-CRYSTALBLOOM_COLOSSAL_WALL :: 0.05
 
 crystalbloom_point_type :: proc(
 	points: ^[MAX_POINTS]u16,
@@ -65,16 +59,20 @@ crystalbloom_point_type :: proc(
 	topY: i32,
 	seed: u64,
 ) {
+	CRYSTALBLOOM_GRASS_DEPTH :: 5
+	CRYSTALBLOOM_LOAM_DEPTH :: 15
+	CRYSTALBLOOM_MID_DEPTH :: 45
+
+	assert(topY >= worldXYZ.y)
 	diffY := topY - worldXYZ.y
 
 
-	inMidZone := diffY < CRYSTALBLOOM_MID_DEPTH
-
-	if !inMidZone {
+	if diffY < CRYSTALBLOOM_LOAM_DEPTH {
+		GRASS_SCALE :: 0.02
 		noise := algorithms.fbm_3d(
-			f64(worldXYZ.x),
-			f64(worldXYZ.y),
-			f64(worldXYZ.z),
+			f64(worldXYZ.x) * GRASS_SCALE,
+			f64(worldXYZ.y) * GRASS_SCALE,
+			f64(worldXYZ.z) * GRASS_SCALE,
 			seed + 0x864,
 			2,
 			.5,
@@ -83,47 +81,22 @@ crystalbloom_point_type :: proc(
 		if noise > 0.78 {
 			points[index_into_point_arrays(index)] = u16(PointType.BlueDiamond)
 			return
-		} else if noise > 0.72 {
+		} else if noise > 0.66 {
 			points[index_into_point_arrays(index)] = u16(PointType.BlackCliff)
 			return
-		} else if noise > 0.68 {
-			points[index_into_point_arrays(index)] = u16(PointType.Air)
-			return
 		} else {
-			points[index_into_point_arrays(index)] = u16(PointType.CrystalTrunk)
+			points[index_into_point_arrays(index)] = u16(PointType.BlueDiamond)
 			return
 
 		}
 
 	}
-	// --- Vertical shafts: punch columns from just below loam down into mid zone ---
-	// 2D noise so the shaft is consistent across the full Y column
-	if inMidZone {
-		SHAFT_SCALE :: 0.018
-		shaft := algorithms.fbm_2d(
-			f64(worldXYZ.x) * SHAFT_SCALE,
-			f64(worldXYZ.z) * SHAFT_SCALE,
-			seed + 0x5AFE,
-			2,
-			2.0,
-			0.5,
-		)
-		// shaft > 0.78 = open air column
-		// shaft > 0.72 = shard wall lining the shaft
-		if shaft > 0.78 {
-			points[index_into_point_arrays(index)] = u16(PointType.Air)
-			return
-		}
-		if shaft > 0.72 {
-			points[index_into_point_arrays(index)] = u16(PointType.SharditeMineral)
-			return
-		}
-	}
+
 
 	// --- Mid zone horizontal corridors ---
-	if inMidZone {
-		CORRIDOR_SCALE_XZ :: 0.025
-		CORRIDOR_SCALE_Y :: 0.008 // very stretched vertically = flat corridors
+	if diffY < CRYSTALBLOOM_MID_DEPTH {
+		CORRIDOR_SCALE_XZ :: 0.005
+		CORRIDOR_SCALE_Y :: 0.07
 		corridor := algorithms.fbm_3d(
 			f64(worldXYZ.x) * CORRIDOR_SCALE_XZ,
 			f64(worldXYZ.y) * CORRIDOR_SCALE_Y,
@@ -133,22 +106,19 @@ crystalbloom_point_type :: proc(
 			2.0,
 			0.5,
 		)
-		if corridor > 0.72 {
+		if corridor > 0.71 {
 			points[index_into_point_arrays(index)] = u16(PointType.Air)
 			return
 		}
-		if corridor > 0.66 {
-			points[index_into_point_arrays(index)] = u16(PointType.SharditeMineral)
-			return
-		}
+
 		points[index_into_point_arrays(index)] = u16(PointType.VeilStone)
 		return
 	}
 
 	// --- Deep zone horizontal corridors ---
-	{
+	if worldXYZ.y != MIN_Y {
 		CORRIDOR_SCALE_XZ :: 0.02
-		CORRIDOR_SCALE_Y :: 0.006
+		CORRIDOR_SCALE_Y :: 0.08
 		corridor := algorithms.fbm_3d(
 			f64(worldXYZ.x) * CORRIDOR_SCALE_XZ,
 			f64(worldXYZ.y) * CORRIDOR_SCALE_Y,
@@ -168,36 +138,139 @@ crystalbloom_point_type :: proc(
 		}
 		points[index_into_point_arrays(index)] = u16(PointType.AbyssStone)
 		return
+	} else {
+		points[index_into_point_arrays(index)] = u16(PointType.AbyssStone)
+		return
 	}
 }
 
-gorglai_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+gorglai_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 	//todo
 	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
-arakholm_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+arakholm_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 	//todo
 	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
-merplia_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+merplia_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 	//todo
 	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
-wintercrown_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+wintercrown_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 	//todo
 	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
 
-scholathorn_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+scholathorn_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 	//todo
 	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
-adwaron_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+adwaron_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 	//todo
-	points[index_into_point_arrays(index)] = u16(PointType.Water)
+
+	ADWARON_FIRST_LEVEL_DEEPNESS :: 10
+	ADWARON_SECOND_LEVEL_DEEPNESS :: 40
+
+	// points[index_into_point_arrays(index)] = u16(PointType.Water)
+	diffY := topY - worldXYZ.y
+
+	if diffY < ADWARON_FIRST_LEVEL_DEEPNESS {
+		points[index_into_point_arrays(index)] = u16(PointType.EnchantedSoil)
+		SCALE: f64 : 0.02
+		noise := algorithms.worley_3d(
+			f64(worldXYZ.x) * SCALE,
+			f64(worldXYZ.y) * SCALE,
+			f64(worldXYZ.z) * SCALE,
+			seed,
+		)
+		if noise > .62 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		} else if noise > .42 {
+			points[index_into_point_arrays(index)] = u16(PointType.EnchantedPasture)
+			return
+		} else {
+			points[index_into_point_arrays(index)] = u16(PointType.EnchantedSoil)
+			return
+		}
+	} else if diffY < ADWARON_SECOND_LEVEL_DEEPNESS {
+		SCALEXZ: f64 : 0.02
+		SCALEY: f64 : 0.02
+
+		noise := algorithms.worley_3d(
+			f64(worldXYZ.x) * SCALEXZ,
+			f64(worldXYZ.y) * SCALEY,
+			f64(worldXYZ.z) * SCALEXZ,
+			seed,
+		)
+		if noise > .41 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		} else {
+			points[index_into_point_arrays(index)] = u16(PointType.MagicAbsorbingRock)
+			return
+		}
+
+	} else if worldXYZ.y == MIN_Y {
+		points[index_into_point_arrays(index)] = u16(PointType.PulsingStone)
+		return
+	} else {
+		points[index_into_point_arrays(index)] = u16(PointType.EnchantedSoil)
+		SCALE: f64 : 0.03
+		noise := algorithms.worley_3d(
+			f64(worldXYZ.x) * SCALE,
+			f64(worldXYZ.y) * SCALE,
+			f64(worldXYZ.z) * SCALE,
+			seed,
+		)
+		if noise > .38 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		} else {
+			points[index_into_point_arrays(index)] = u16(PointType.PulsingStone)
+			return
+		}
+	}
+	unreachable()
+
 }
 
-etherwind_point_type :: proc(points: ^[MAX_POINTS]u16, worldXYZ, index: [3]i32, seed: u64) {
+etherwind_point_type :: proc(
+	points: ^[MAX_POINTS]u16,
+	worldXYZ, index: [3]i32,
+	topY: i32,
+	seed: u64,
+) {
 	//todo
 	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }

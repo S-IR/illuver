@@ -101,6 +101,13 @@ PointType :: enum u16 {
 	UmbraLeaf,
 	CrystalTrunk, // crystal tree
 	CrystalLeaf,
+
+
+	//adwaron
+	EnchantedSoil,
+	EnchantedPasture,
+	MagicAbsorbingRock,
+	PulsingStone,
 }
 #assert(len(PointType) < 1024)
 

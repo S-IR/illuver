@@ -58,7 +58,7 @@ Camera_new :: proc(
 	Camera_rotate(&c)
 	return c
 }
-creativeModeOn: bool
+creativeModeOn: bool = true
 JUMP_FORCE: f32 : 12.0
 camera_process_keyboard_movement :: proc(c: ^Camera, below: f32) {
 	keys := sdl.GetKeyboardState(nil)

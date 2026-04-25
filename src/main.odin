@@ -6,6 +6,7 @@ import "camera"
 import "core:c"
 import "core:container/small_array"
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
 import "core:mem"
@@ -281,6 +282,14 @@ main :: proc() {
 					if gs.CurrGameScreen == .Game {
 						camera.creativeModeOn = !camera.creativeModeOn
 					}
+				case sdl.K_F11:
+					windowFlags := sdl.GetWindowFlags(gs.window)
+					if .FULLSCREEN in windowFlags {
+						sdl.SetWindowFullscreen(gs.window, false)
+					} else {
+						sdl.SetWindowFullscreen(gs.window, true)
+
+					}
 				case sdl.K_1:
 					spellbar_select(&inventory, 0)
 				case sdl.K_2:
@@ -354,7 +363,7 @@ main :: proc() {
 				assert(userInfoFileHandle != nil)
 
 				if !foundExisting {
-					camera.curr = camera.Camera_new(pos = {0, 5, -2}, front = {0, 0, 1})
+					camera.curr = camera.Camera_new(pos = {0, 5, 0}, front = {0, 0, 1})
 				} else {
 					camera.curr = existingInfo.currCamera
 					inventory.data = existingInfo.inventoryData
@@ -472,6 +481,34 @@ game_render :: proc(
 		currCamera^,
 		hasItemToPlace,
 	)
+
+	currBiome := get_major_biome(
+		i32(math.round(currCamera.pos.x)),
+		i32(math.round(currCamera.pos.z)),
+		gs.seed,
+	)
+	currBiomeStr, _ := fmt.enum_value_to_string(currBiome)
+	ui.add_text(
+		fmt.tprintf("Biome: %s", currBiomeStr),
+		inventory.usedFont,
+		32,
+		10,
+		10,
+		{.1, .1, .1, 1},
+	)
+
+	if raycastDidHappen {
+		pointStr, _ := fmt.enum_value_to_string(u16_to_point_type(raycastPointHit))
+
+		ui.add_text(
+			fmt.tprintf("Point hit: %s", pointStr),
+			inventory.usedFont,
+			32,
+			10,
+			100,
+			{.1, .1, .1, 1},
+		)
+	}
 	// fmt.print("camera pos ", currCamera.pos)
 	// fmt.print(" raycastPointPos", raycastPointPos)
 	// fmt.print(" 0 4 -2 point", get_point_at_world_pos({0, 4, -2}, currCamera))

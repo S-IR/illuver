@@ -99,7 +99,18 @@ when !VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	}
 }
 
-
+get_major_biome :: proc(x, z: i32, seed: u64) -> Biome {
+	res := get_biome_weights(x, z, seed)
+	max: u8 = 0
+	biome := Biome.Crystalbloom
+	for score, b in res {
+		if score > max {
+			max = score
+			biome = b
+		}
+	}
+	return biome
+}
 get_biome_weights :: proc(x, z: i32, seed: u64) -> (biomeWeights: BiomeWeights) {
 	HEIGHT_MAP_SCALE :: .002
 	ruggedness1 := algorithms.fbm_2d(

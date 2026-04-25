@@ -27,6 +27,12 @@ export enum PointType : uint16_t {
   UmbraLeaf,
   CrystalTrunk,
   CrystalLeaf,
+
+  // adwaron
+  EnchantedSoil,
+  EnchantedPasture,
+  MagicAbsorbingRock,
+  PulsingStone,
 };
 
 PointType getPointType(uint16_t p) { return PointType(uint(p) & TYPE_MASK); }
@@ -83,6 +89,18 @@ float3 baseColor(PointType type) {
     return float3(180, 140, 220) / 255.0;
   case PointType::CrystalLeaf:
     return float3(200, 240, 255) / 255.0;
+
+  case PointType::EnchantedSoil:
+    return float3(14, 23, 21) / 255.0;
+
+  case PointType::EnchantedPasture:
+    return float3(14, 23, 201) / 255.0;
+
+  case PointType::MagicAbsorbingRock:
+    return float3(230, 162, 198) / 255.0;
+
+  case PointType::PulsingStone:
+    return float3(48, 25, 52) / 255.0;
 
   default:
     return float3(0.0);
