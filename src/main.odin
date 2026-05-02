@@ -318,7 +318,15 @@ main :: proc() {
 					vkh.updateSwapchain = true
 				}
 			case .MOUSE_MOTION:
-				camera.Camera_process_mouse_movement(&camera.curr, e.motion.xrel, e.motion.yrel)
+				camera.Camera_process_mouse_movement(
+					&camera.curr,
+					e.motion.xrel,
+					e.motion.yrel,
+					e.motion.x,
+					e.motion.y,
+					gs.screenWidth,
+					gs.screenHeight,
+				)
 				mouseX = f32(e.motion.x)
 				mouseY = f32(e.motion.y)
 			case .MOUSE_BUTTON_DOWN:
@@ -363,7 +371,7 @@ main :: proc() {
 				assert(userInfoFileHandle != nil)
 
 				if !foundExisting {
-					camera.curr = camera.Camera_new(pos = {-1200, 5, 1200}, front = {0, 0, 1})
+					camera.curr = camera.Camera_new(pos = {-1700, 5, 900}, front = {0, 0, 1})
 				} else {
 					camera.curr = existingInfo.currCamera
 					inventory.data = existingInfo.inventoryData

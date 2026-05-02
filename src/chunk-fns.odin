@@ -156,8 +156,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			}
 		}
 	}
+	centerChunk := rc(CHUNKS_PER_DIRECTION / 2, CHUNKS_PER_DIRECTION / 2)
+	centerChunkCoord := centerChunk.pos / CHUNK_STRIDE
 
-	sync.wait(&chunkWorkersWG)
+	assert(chunk_contains_point(centerChunk.pos, camera.curr.pos))
+
 }
 
 
@@ -211,6 +214,7 @@ get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) 
 	centerChunk := rc(CHUNKS_PER_DIRECTION / 2, CHUNKS_PER_DIRECTION / 2)
 	centerChunkCoord := centerChunk.pos / CHUNK_STRIDE
 
+	assert(chunk_contains_point(centerChunk.pos, currCamera.pos))
 	half := i32(CHUNKS_PER_DIRECTION / 2)
 	arrayIndex := [2]i32 {
 		half + (chunkCoordXZ[0] - centerChunkCoord[0]),
@@ -235,6 +239,12 @@ get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) 
 	assert(localXYZ.z >= 0 && localXYZ.z < VERTS_PER_Z_DIR)
 
 	return chunk.points[index_into_point_arrays(localXYZ)]
+}
+chunk_contains_point :: proc(chunkXZ: [2]i32, pos: [3]f32) -> bool {
+	posXZ := [2]i32{i32(math.round(pos.x)), i32(math.round(pos.z))}
+	diff := posXZ - chunkXZ
+
+	return diff[0] >= 0 && diff[1] >= 0 && diff[0] <= CHUNK_STRIDE && diff[1] <= CHUNK_STRIDE
 }
 MAX_WALKABLE_SLOPE :: f32(0.6)
 

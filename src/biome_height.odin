@@ -1097,11 +1097,10 @@ crystalbloom_height :: proc(x, z: i32, seed: u64) -> f32 {
 gorglai_height :: proc(x, z: i32, seed: u64) -> f32 {
 	warpX :=
 		f64(x) * 0.0005 +
-		algorithms.fbm_2d(f64(x) * 0.002, f64(z) * 0.002, seed + 12345, 2, 0.5, 2.0) * 20.0
+		algorithms.fbm_2d(f64(x) * 0.002, f64(z) * 0.002, seed + 271, 2, 0.5, 2.0) * 20.0
 	warpZ :=
 		f64(z) * 0.0005 +
-		algorithms.fbm_2d(f64(x) * 0.002 + 5.0, f64(z) * 0.002 + 5.0, seed + 67890, 2, 0.5, 2.0) *
-			20.0
+		algorithms.fbm_2d(f64(x) * 0.002, f64(z) * 0.002, seed + 175, 2, 0.5, 2.0) * 20.0
 
 	noise := algorithms.fbm_2d(warpX, warpZ, seed, 5, 0.5, 2.0)
 

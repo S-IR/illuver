@@ -155,7 +155,7 @@ gorglai_point_type :: proc(
 	GORGLAI_ABOVE_LEVEL :: 20
 	GORGLAI_CANYON_LEVEL :: -15
 
-	GORGLAI_UNDERGROUND_LEVEL :: -40
+	GORGLAI_UNDERGROUND_LEVEL :: -65
 
 	if worldXYZ.y > GORGLAI_ABOVE_LEVEL {
 		GORGLAI_PEAK_LEVEL :: 55
@@ -228,56 +228,51 @@ gorglai_point_type :: proc(
 			return
 		}
 	}
-	if topY > GORGLAI_UNDERGROUND_LEVEL {
-		// CANYON_TOP_PADDING :: GORGLAI_ABOVE_LEVEL - GORGLAI_CANYON_LEVEL
-		// diffToPeak := f32(
-		// 	math.clamp(f64(worldXYZ.y - GORGLAI_CANYON_LEVEL) / f64(CANYON_TOP_PADDING), 0.0, 1.0),
-		// )
-		// if diffToPeak >= 1.0 {
-		// 	points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
-		// 	return
-		// }
-		// CANYON_GROUND_SCALE_XZ :: 0.004
-		// CANYON_GROUND_SCALE_Y :: 0.001
+	#assert(MIN_Y < GORGLAI_UNDERGROUND_LEVEL)
+	if worldXYZ.y > GORGLAI_UNDERGROUND_LEVEL {
+		CANYON_TOP_PADDING :: GORGLAI_ABOVE_LEVEL - GORGLAI_CANYON_LEVEL
+		diffToPeak := f32(
+			math.clamp(f64(worldXYZ.y - GORGLAI_CANYON_LEVEL) / f64(CANYON_TOP_PADDING), 0.0, 1.0),
+		)
+		if diffToPeak >= 1.0 {
+			points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
+			return
+		}
+		CANYON_GROUND_SCALE_XZ :: 0.004
+		CANYON_GROUND_SCALE_Y :: 0.004
 
-		// canyonNoise := algorithms.fbm_3d(
-		// 	f64(worldXYZ.x) * CANYON_GROUND_SCALE_XZ,
-		// 	f64(worldXYZ.y) * CANYON_GROUND_SCALE_Y,
-		// 	f64(worldXYZ.z) * CANYON_GROUND_SCALE_XZ,
-		// 	seed + 0x864,
-		// 	2,
-		// 	.5,
-		// 	.5,
-		// )
-		// adjustedNoise := f64(canyonNoise) + f64(diffToPeak) * 0.3
+		canyonNoise := algorithms.worley_3d(
+			f64(worldXYZ.x) * CANYON_GROUND_SCALE_XZ,
+			f64(worldXYZ.y) * CANYON_GROUND_SCALE_Y,
+			f64(worldXYZ.z) * CANYON_GROUND_SCALE_XZ,
+			seed + 0x864,
+		)
+		adjustedNoise := f64(canyonNoise) + f64(diffToPeak) * 0.3
 
-		// if adjustedNoise > .71 {
-		// 	points[index_into_point_arrays(index)] = u16(PointType.Air)
-		// 	return
-		// } else if adjustedNoise > .61 {
-		// 	points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
-		// 	return
-		// }
+		if adjustedNoise > .51 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		} else if adjustedNoise > .39 {
+			points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
+			return
+		}
 		points[index_into_point_arrays(index)] = u16(PointType.Canyonite)
 		return
 	}
 	if worldXYZ.y != MIN_Y {
-		UNDERGROUND_CANYON_SIZE_XZ :: 0.0078
-		UNDERGROUND_CANYON_SIZE_Y :: 0.0004
-		undergroundCanyonNoise := algorithms.fbm_3d(
+		UNDERGROUND_CANYON_SIZE_XZ :: 0.028
+		UNDERGROUND_CANYON_SIZE_Y :: 0.028
+		undergroundCanyonNoise := algorithms.worley_3d(
 			f64(worldXYZ.x) * UNDERGROUND_CANYON_SIZE_XZ,
 			f64(worldXYZ.y) * UNDERGROUND_CANYON_SIZE_Y,
 			f64(worldXYZ.z) * UNDERGROUND_CANYON_SIZE_XZ,
 			seed + 0x864,
-			2,
-			.5,
-			.5,
 		)
 
-		if undergroundCanyonNoise > .63 {
+		if undergroundCanyonNoise > .50 {
 			points[index_into_point_arrays(index)] = u16(PointType.Canyonite)
 			return
-		} else if undergroundCanyonNoise > .59 {
+		} else if undergroundCanyonNoise > .45 {
 			points[index_into_point_arrays(index)] = u16(PointType.Air)
 			return
 		}

@@ -110,17 +110,35 @@ camera_process_keyboard_movement :: proc(c: ^Camera, below: f32) {
 	c.pos += delta
 
 }
-Camera_process_mouse_movement :: proc(c: ^Camera, received_xOffset, received_yOffset: f32) {
+Camera_process_mouse_movement :: proc(
+	c: ^Camera,
+	received_xOffset, received_yOffset: f32,
+	mouseX, mouseY: f32,
+	screenW, screenH: u32,
+) {
 	xOffset := received_xOffset * c.mouseSensitivity
 	yOffset := -received_yOffset * c.mouseSensitivity
 
+	EDGE_ZONE :: f32(0.02)
+	sw := f32(screenW)
+	sh := f32(screenH)
+	EDGE_OFFSET :: 500
+	if mouseX < sw * EDGE_ZONE {
+		c.yaw -= EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
+	} else if mouseX > sw * (1 - EDGE_ZONE) {
+		c.yaw += EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
+	}
+	if mouseY < sh * EDGE_ZONE {
+		c.pitch += EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
+	} else if mouseY > sh * (1 - EDGE_ZONE) {
+		c.pitch -= EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
+	}
+
 	c.yaw += xOffset
 	c.pitch += yOffset
-
 	c.pitch = math.clamp(c.pitch, -89.0, 89.0)
 	Camera_rotate(c)
 }
-
 Camera_view_proj :: proc(c: ^Camera) -> (view, proj: matrix[4, 4]f32) {
 	// fmt.println("c.front", c.front)
 	// fmt.println("c.up", c.up)
