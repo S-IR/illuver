@@ -20,14 +20,14 @@ Biome :: enum {
 }
 BiomeWeights :: [Biome]u8
 BiomeSpacesPerValues :: [Biome][3]f64 {
-	.Crystalbloom = {0.35, 0.35, 0.35},
-	.Gorglai      = {0.65, 0.35, 0.35},
-	.Arakholm     = {0.35, 0.65, 0.35},
-	.Merplia      = {0.65, 0.65, 0.35},
-	.Wintercrown  = {0.35, 0.35, 0.65},
-	.Scholathorn  = {0.65, 0.35, 0.65},
-	.Adwaron      = {0.35, 0.65, 0.65},
-	.Etherwind    = {0.65, 0.65, 0.65},
+	.Crystalbloom = {0.1, 0.1, 0.1},
+	.Gorglai      = {0.9, 0.1, 0.1},
+	.Arakholm     = {0.1, 0.9, 0.1},
+	.Merplia      = {0.9, 0.9, 0.1},
+	.Wintercrown  = {0.1, 0.1, 0.9},
+	.Scholathorn  = {0.9, 0.1, 0.9},
+	.Adwaron      = {0.1, 0.9, 0.9},
+	.Etherwind    = {0.9, 0.9, 0.9},
 }
 
 procedural_point_type_noise_result :: proc(x, y, z: i32, seed: u64, biome: Biome) -> f32 {
@@ -113,7 +113,8 @@ get_major_biome :: proc(x, z: i32, seed: u64) -> Biome {
 }
 get_biome_weights :: proc(x, z: i32, seed: u64) -> (biomeWeights: BiomeWeights) {
 	HEIGHT_MAP_SCALE :: .0009
-	ruggedness1 := algorithms.fbm_2d(
+
+	ruggedness := algorithms.fbm_2d(
 		f64(x) * HEIGHT_MAP_SCALE,
 		f64(z) * HEIGHT_MAP_SCALE,
 		seed,
@@ -121,62 +122,28 @@ get_biome_weights :: proc(x, z: i32, seed: u64) -> (biomeWeights: BiomeWeights) 
 		.5,
 		.5,
 	)
-	ruggedness2 := algorithms.fbm_2d(
-		(f64(x) + 2.3) * HEIGHT_MAP_SCALE,
-		(f64(z) + 4.1) * HEIGHT_MAP_SCALE,
-		seed,
-		3,
-		.75,
-		.3,
+
+	curvature := algorithms.worley_2d(
+		(f64(x) + 100.0) * HEIGHT_MAP_SCALE,
+		(f64(z) + 100.0) * HEIGHT_MAP_SCALE,
+		seed + 1,
 	)
 
-	assert(ruggedness1 >= 0 && ruggedness1 <= 1)
-	assert(ruggedness2 >= 0 && ruggedness2 <= 1)
+	verticality := algorithms.fbm_2d(
+		(f64(x) + 200.0) * HEIGHT_MAP_SCALE,
+		(f64(z) + 200.0) * HEIGHT_MAP_SCALE,
+		seed + 2,
+		3,
+		.5,
+		.5,
+	)
 
-	ruggedness := algorithms.fbm_2d(ruggedness1, ruggedness2, seed, 1, .5, .3)
 	assert(ruggedness >= 0 && ruggedness <= 1)
-
-
-	curvature1 := algorithms.worley_2d(
-		(f64(x) + 10.2) * HEIGHT_MAP_SCALE,
-		(f64(z) + 0.5) * HEIGHT_MAP_SCALE,
-		seed,
-	)
-	curvature2 := algorithms.worley_2d(
-		(f64(x) + 2.3) * HEIGHT_MAP_SCALE,
-		(f64(z) + 4.1) * HEIGHT_MAP_SCALE,
-		seed,
-	)
-
-	assert(curvature1 >= 0 && curvature1 <= 1)
-	assert(curvature2 >= 0 && curvature2 <= 1)
-
-
-	curvature := algorithms.fbm_2d(ruggedness1, curvature2, seed, 1, .3, .5)
-
 	assert(curvature >= 0 && curvature <= 1)
-
-	verticality1 := algorithms.fbm_2d(
-		f64(f64(x) + 2.4) * HEIGHT_MAP_SCALE,
-		f64(f64(z) + 3.1) * HEIGHT_MAP_SCALE,
-		seed,
-		3,
-		.5,
-		.5,
-	)
-	verticality2 := curvature2
-
-	assert(verticality1 >= 0 && verticality1 <= 1)
-	assert(verticality2 >= 0 && verticality2 <= 1)
-
-	verticality := algorithms.worley_2d(verticality1, verticality2, seed)
 	assert(verticality >= 0 && verticality <= 1)
 
-
 	rgv := [3]f64{ruggedness, curvature, verticality}
-	SHARPNESS :: 4.0
 
-	// totalWeight := 0
 	total: f32 = 0
 	weightsF32 := [Biome]f32{}
 	for biomeSpaceValue, biome in BiomeSpacesPerValues {
@@ -185,11 +152,13 @@ get_biome_weights :: proc(x, z: i32, seed: u64) -> (biomeWeights: BiomeWeights) 
 		dist2 := diff[0] + diff[1] + diff[2]
 
 		inv: f32 = 1.0 / (f32(dist2) + 0.0001)
-		w: f32 = inv * inv // SHARPNESS = 2
-		w *= w // SHARPNESS = 4
+		w: f32 = inv * inv
+		w *= w
+		w *= w
 		weightsF32[biome] = w
 		total += w
 	}
+
 	assert(total > 0)
 	floors := [Biome]int{}
 	fracs := [Biome]f32{}
@@ -198,62 +167,32 @@ get_biome_weights :: proc(x, z: i32, seed: u64) -> (biomeWeights: BiomeWeights) 
 	for biome in Biome {
 		normalized := weightsF32[biome] / total
 		scaled := normalized * 255.0
-
 		floorVal := int(scaled)
 		floors[biome] = floorVal
 		fracs[biome] = scaled - f32(floorVal)
-
 		biomeWeights[biome] = u8(floorVal)
 		accum += floorVal
 	}
 
 	remainder := 255 - accum
 	if remainder > 0 {
-		// Build list of (biome, fractional part) for sorting
 		Entry :: struct {
 			biome: Biome,
 			frac:  f32,
 		}
 		entries := [len(Biome)]Entry{}
-		// defer delete(entries)
-
 		for biome, i in Biome {
 			entries[i] = Entry{biome, fracs[biome]}
 		}
-
-		// Sort descending by fractional part (highest remainder first)
 		slice.sort_by(entries[:], proc(a, b: Entry) -> bool {
 			return a.frac > b.frac
 		})
-
-		// Give the +1 to the top `remainder` biomes
 		for i := 0; i < remainder && i < len(entries); i += 1 {
 			biomeWeights[entries[i].biome] += 1
 		}
 	}
 	return biomeWeights
-	// v = (v + 1.0) * 0.5
-
-	// forest := clamp(1.0 - abs(v - 0.2) * 4.0, 0.0, 1.0)
-	// crystal := clamp(1.0 - abs(v - 0.5) * 4.0, 0.0, 1.0)
-	// mountain := clamp(1.0 - abs(v - 0.8) * 4.0, 0.0, 1.0)
-
-	// sum := forest + crystal + mountain
-	// if sum == 0 {
-	// 	return Biome{255, 0, 0}
-	// }
-
-	// forest /= sum
-	// crystal /= sum
-	// mountain /= sum
-
-	// wf := u8(forest * 255.0)
-	// wc := u8(crystal * 255.0)
-	// wm := 255 - wf - wc
-
-	// return Biome{wf, wc, wm}
 }
-
 
 randomColorIndex := 0
 

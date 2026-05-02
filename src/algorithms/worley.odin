@@ -83,40 +83,34 @@ worley_2d_simd :: proc(x, y: #simd[8]f64, seed: u64) -> #simd[8]f64 {
 	)
 }
 
+
 worley_2d :: proc(x, y: f64, seed: u64) -> f64 {
 	cellX := i64(math.floor(x))
 	cellY := i64(math.floor(y))
 	minDist := f64(1e9)
-
 	for oy: i64 = -1; oy <= 1; oy += 1 {
 		for ox: i64 = -1; ox <= 1; ox += 1 {
 			cx := cellX + ox
 			cy := cellY + oy
-
-
 			h := hash2d(cx, cy, seed)
-
-			fx := f64(cx) + rand_from_u64(h)
-			fy := f64(cy) + rand_from_u64(h >> 32)
-
+			fx := f64(cx) + rand_from_u64(h) - 0.5
+			fy := f64(cy) + rand_from_u64(h >> 32) - 0.5
 			dx := fx - x
 			dy := fy - y
 			dist := math.sqrt(dx * dx + dy * dy)
-
 			if dist < minDist {
 				minDist = dist
 			}
-
 		}
 	}
-	return math.clamp(minDist / 1.41421356237, 0.0, 1.0)
+	return math.clamp(minDist / math.SQRT_TWO, 0.0, 1.0)
 }
+
 worley_3d :: proc(x, y, z: f64, seed: u64) -> f64 {
 	cellX := i64(math.floor(x))
 	cellY := i64(math.floor(y))
 	cellZ := i64(math.floor(z))
 	minDist := f64(1e9)
-
 	for oz: i64 = -1; oz <= 1; oz += 1 {
 		for oy: i64 = -1; oy <= 1; oy += 1 {
 			for ox: i64 = -1; ox <= 1; ox += 1 {
@@ -125,9 +119,9 @@ worley_3d :: proc(x, y, z: f64, seed: u64) -> f64 {
 				cz := cellZ + oz
 				h := hash3d(cx, cy, cz, seed)
 				rx, ry, rz := rand3_from_u64(h)
-				fx := f64(cx) + rx
-				fy := f64(cy) + ry
-				fz := f64(cz) + rz
+				fx := f64(cx) + rx - 0.5
+				fy := f64(cy) + ry - 0.5
+				fz := f64(cz) + rz - 0.5
 				dx := fx - x
 				dy := fy - y
 				dz := fz - z
@@ -138,6 +132,5 @@ worley_3d :: proc(x, y, z: f64, seed: u64) -> f64 {
 			}
 		}
 	}
-
-	return math.clamp(minDist / 1.73205080757, 0.0, 1.0)
+	return math.clamp(minDist / math.SQRT_THREE, 0.0, 1.0)
 }

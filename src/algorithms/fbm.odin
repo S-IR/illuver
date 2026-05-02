@@ -9,195 +9,23 @@ fbm_max_amplitude :: proc(octaves: int, gain: f64) -> f64 {
 	}
 	return (1.0 - math.pow(gain, f64(octaves))) / (1.0 - gain)
 }
-fbm_2d_simd :: proc(
-	x, y: #simd[8]f64,
-	seed: u64,
-	octaves: int,
-	lacunarity, gain: f64,
-) -> (
-	res: #simd[8]f64,
-) {
 
-	sum: #simd[8]f64 = {}
-	amplitude: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	frequency: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	maxValPossible := amplitude
-	seedTransmuted := transmute(i64)seed
-	for i in 0 ..< octaves {
-		xWithFreq := x * frequency
-		yWithFreq := y * frequency
-
-		noises := #simd[8]f64 {
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 0), simd.extract(yWithFreq, 0)},
-				),
-			),
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 1), simd.extract(yWithFreq, 1)},
-				),
-			),
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 2), simd.extract(yWithFreq, 2)},
-				),
-			),
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 3), simd.extract(yWithFreq, 3)},
-				),
-			),
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 4), simd.extract(yWithFreq, 4)},
-				),
-			),
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 5), simd.extract(yWithFreq, 5)},
-				),
-			),
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 6), simd.extract(yWithFreq, 6)},
-				),
-			),
-			f64(
-				noise.noise_2d(
-					seedTransmuted,
-					{simd.extract(xWithFreq, 7), simd.extract(yWithFreq, 7)},
-				),
-			),
-		}
-		sum += amplitude * noises
-		maxValPossible += amplitude
-		frequency *= lacunarity
-		amplitude *= gain
-	}
-	// maxAmpl := fbm_max_amplitude(octaves, gain)
-	sum /= maxValPossible
-	sum = (sum + 1) / 2
-
-	res = sum
-	when ODIN_DEBUG == true {
-		for i in 0 ..< 8 {
-			val := simd.extract(res, i)
-			assert(val >= 0 && val <= 1)
-		}
-	}
-
-
-	return res
-
-
-}
 fbm_2d :: proc(x, y: f64, seed: u64, octaves: int, lacunarity, gain: f64) -> (res: f64) {
 	sum: f64 = 0.0
 	amplitude: f64 = 1.0
 	frequency: f64 = 1.0
-	maxValPossible := 1.0
-	for i in 0 ..< octaves {
-		sum += amplitude * f64(noise.noise_2d(transmute(i64)seed, {x * frequency, y * frequency}))
+	maxValPossible: f64 = 0.0
 
+	for i in 0 ..< octaves {
 		maxValPossible += amplitude
+		sum += amplitude * f64(noise.noise_2d(transmute(i64)seed, {x * frequency, y * frequency}))
 		frequency *= lacunarity
 		amplitude *= gain
 	}
-	// maxAmpl := fbm_max_amplitude(octaves, gain)
-	sum /= maxValPossible
-	sum = (sum + 1) / 2
 
-	res = sum
+	sum /= maxValPossible
+	res = (sum + 1.0) * 0.5
 	assert(res >= 0 && res <= 1)
-
-	return res
-}
-
-ridged_fbm_2d :: proc(x, y: f64, seed: u64, octaves: int, lacunarity, gain: f64) -> (res: f64) {
-	OFFSET :: 1.0
-
-	sum: f64 = 0.0
-	amplitude: f64 = 1.0
-	frequency: f64 = 1.0
-	weight: f64 = 1.0
-	maxValPossible := 1.0
-
-	for i in 0 ..< octaves {
-		n := f64(noise.noise_2d(transmute(i64)seed, {x * frequency, y * frequency}))
-
-		signal := OFFSET - math.abs(n)
-
-		sum += signal * amplitude
-
-		maxValPossible += 2.0 * amplitude
-		frequency *= lacunarity
-		amplitude *= gain
-	}
-
-	sum /= maxValPossible
-
-	res = sum
-	assert(res >= 0 && res <= 1)
-
-	return res
-}
-ridged_fbm_2d_simd :: proc(
-	x, y: #simd[8]f64,
-	seed: u64,
-	octaves: int,
-	lacunarity, gain: f64,
-) -> (
-	res: #simd[8]f64,
-) {
-	OFFSET :: 1.0
-
-	sum: #simd[8]f64 = {}
-	amplitude: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	frequency: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	maxValPossible: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	seedTransmuted := transmute(i64)seed
-
-	for i in 0 ..< octaves {
-		xf := x * frequency
-		yf := y * frequency
-
-		noises := #simd[8]f64 {
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 0), simd.extract(yf, 0)})),
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 1), simd.extract(yf, 1)})),
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 2), simd.extract(yf, 2)})),
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 3), simd.extract(yf, 3)})),
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 4), simd.extract(yf, 4)})),
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 5), simd.extract(yf, 5)})),
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 6), simd.extract(yf, 6)})),
-			f64(noise.noise_2d(seedTransmuted, {simd.extract(xf, 7), simd.extract(yf, 7)})),
-		}
-
-		offset_vec: #simd[8]f64 = {OFFSET, OFFSET, OFFSET, OFFSET, OFFSET, OFFSET, OFFSET, OFFSET}
-		signal := offset_vec - simd.abs(noises)
-
-		sum += signal * amplitude
-		maxValPossible += {2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0} * amplitude
-		frequency *= lacunarity
-		amplitude *= gain
-	}
-
-	sum /= maxValPossible
-
-	res = sum
-	when ODIN_DEBUG == true {
-		for i in 0 ..< 8 {
-			val := simd.extract(res, i)
-			assert(val >= 0 && val <= 1)
-		}
-	}
 	return res
 }
 
@@ -205,215 +33,49 @@ fbm_3d :: proc(x, y, z: f64, seed: u64, octaves: int, lacunarity, gain: f64) -> 
 	sum: f64 = 0.0
 	amplitude: f64 = 1.0
 	frequency: f64 = 1.0
-	maxValPossible := 1.0
+	maxValPossible: f64 = 0.0
 
 	for i in 0 ..< octaves {
+		maxValPossible += amplitude
 		sum +=
 			amplitude *
 			f64(
-				(noise.noise_3d_improve_xz(
-						transmute(i64)seed,
-						{x * frequency, y * frequency, z * frequency},
-					) +
-					1) /
-				2,
+				noise.noise_3d_improve_xz(
+					transmute(i64)seed,
+					{x * frequency, y * frequency, z * frequency},
+				),
 			)
-		maxValPossible += amplitude * 1.0
-
 		frequency *= lacunarity
 		amplitude *= gain
 	}
+
 	sum /= maxValPossible
-	sum = (sum + 1) / 2
+	res = (sum + 1.0) * 0.5
+	assert(res >= 0 && res <= 1)
+	return res
+}
+ridged_fbm_2d :: proc(x, y: f64, seed: u64, octaves: int, lacunarity, gain: f64) -> (res: f64) {
+	OFFSET :: 1.0
+	sum: f64 = 0.0
+	amplitude: f64 = 1.0
+	frequency: f64 = 1.0
+	maxValPossible: f64 = 0.0
 
+	for i in 0 ..< octaves {
+		maxValPossible += 2.0 * amplitude
+		n := f64(noise.noise_2d(transmute(i64)seed, {x * frequency, y * frequency}))
+		signal := OFFSET - math.abs(n)
+		sum += signal * amplitude
+		frequency *= lacunarity
+		amplitude *= gain
+	}
 
-	res = sum
+	res = sum / maxValPossible
 	assert(res >= 0 && res <= 1)
 	return res
 }
 
-fbm_3d_simd :: proc(
-	x, y, z: #simd[8]f64,
-	seed: u64,
-	octaves: int,
-	lacunarity, gain: f64,
-) -> (
-	res: #simd[8]f64,
-) {
-	sum: #simd[8]f64 = {}
-	amplitude: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	frequency: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	maxValPossible := amplitude
-	seedTransmuted := transmute(i64)seed
 
-	for i in 0 ..< octaves {
-		xf := x * frequency
-		yf := y * frequency
-		zf := z * frequency
-
-		noises := #simd[8]f64 {
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 0), simd.extract(yf, 0), simd.extract(zf, 0)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 1), simd.extract(yf, 1), simd.extract(zf, 1)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 2), simd.extract(yf, 2), simd.extract(zf, 2)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 3), simd.extract(yf, 3), simd.extract(zf, 3)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 4), simd.extract(yf, 4), simd.extract(zf, 4)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 5), simd.extract(yf, 5), simd.extract(zf, 5)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 6), simd.extract(yf, 6), simd.extract(zf, 6)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 7), simd.extract(yf, 7), simd.extract(zf, 7)},
-				),
-			),
-		}
-
-		sum += amplitude * noises
-		maxValPossible += amplitude
-		frequency *= lacunarity
-		amplitude *= gain
-	}
-
-	sum /= maxValPossible
-	sum = (sum + 1) / 2
-
-	res = sum
-	when ODIN_DEBUG == true {
-		for i in 0 ..< 8 {
-			val := simd.extract(res, i)
-			assert(val >= 0 && val <= 1)
-		}
-	}
-	return res
-}
-
-ridged_fbm_3d_simd :: proc(
-	x, y, z: #simd[8]f64,
-	seed: u64,
-	octaves: int,
-	lacunarity, gain: f64,
-) -> (
-	res: #simd[8]f64,
-) {
-	OFFSET :: 1.0
-
-	sum: #simd[8]f64 = {}
-	amplitude: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	frequency: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	maxValPossible: #simd[8]f64 = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-	seedTransmuted := transmute(i64)seed
-
-	for i in 0 ..< octaves {
-		xf := x * frequency
-		yf := y * frequency
-		zf := z * frequency
-
-		noises := #simd[8]f64 {
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 0), simd.extract(yf, 0), simd.extract(zf, 0)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 1), simd.extract(yf, 1), simd.extract(zf, 1)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 2), simd.extract(yf, 2), simd.extract(zf, 2)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 3), simd.extract(yf, 3), simd.extract(zf, 3)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 4), simd.extract(yf, 4), simd.extract(zf, 4)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 5), simd.extract(yf, 5), simd.extract(zf, 5)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 6), simd.extract(yf, 6), simd.extract(zf, 6)},
-				),
-			),
-			f64(
-				noise.noise_3d_improve_xz(
-					seedTransmuted,
-					{simd.extract(xf, 7), simd.extract(yf, 7), simd.extract(zf, 7)},
-				),
-			),
-		}
-
-		// OFFSET - abs(n), matching scalar ridged_fbm_3d exactly
-		offset_vec: #simd[8]f64 = {OFFSET, OFFSET, OFFSET, OFFSET, OFFSET, OFFSET, OFFSET, OFFSET}
-		signal := offset_vec - simd.abs(noises)
-
-		sum += signal * amplitude
-		maxValPossible += {2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0} * amplitude
-		frequency *= lacunarity
-		amplitude *= gain
-	}
-
-	sum /= maxValPossible
-
-	res = sum
-	when ODIN_DEBUG == true {
-		for i in 0 ..< 8 {
-			val := simd.extract(res, i)
-			assert(val >= 0 && val <= 1)
-		}
-	}
-	return res
-}
 // ridged_fbm_3d :: proc(x, y, z: f64, seed: u64, octaves: int, lacunarity, gain: f64) -> (res: f64) {
 // 	OFFSET :: 1.0
 // 	RIDGE_GAIN :: 2.0
