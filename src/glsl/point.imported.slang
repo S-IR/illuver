@@ -33,6 +33,23 @@ export enum PointType : uint16_t {
   EnchantedPasture,
   MagicAbsorbingRock,
   PulsingStone,
+
+  // gorglai
+
+  // rock at the top
+  Peakor,
+  // strip rock thats meant to go up and down around a mountain
+  MawbeakRock,
+  // mushroom red soil
+  AvigniSoil,
+  // default gorglai dirt
+  Gorgveil,
+  // wild life product grass
+  AstanaiGrass,
+  // first level rock gorglai
+  Canyonite,
+  // second level rock gorglai
+  Avrasar,
 };
 
 PointType getPointType(uint16_t p) { return PointType(uint(p) & TYPE_MASK); }
@@ -101,6 +118,25 @@ float3 baseColor(PointType type) {
 
   case PointType::PulsingStone:
     return float3(48, 25, 52) / 255.0;
+
+  case PointType::Peakor:
+    return float3(187, 82, 11) / 255.0;
+
+  case PointType::MawbeakRock:
+    return float3(39, 41, 47) / 255.0;
+
+  case PointType::Gorgveil:
+    return float3(181, 103, 52) / 255.0;
+  case PointType::AstanaiGrass:
+    return float3(72, 84, 23) / 255.0;
+  case PointType::AvigniSoil:
+    return float3(109, 38, 30) / 255.0;
+
+  case PointType::Canyonite:
+    return float3(195, 142, 82) / 255.0;
+
+  case PointType::Avrasar:
+    return float3(49, 36, 26) / 255.0;
 
   default:
     return float3(0.0);

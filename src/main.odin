@@ -363,7 +363,7 @@ main :: proc() {
 				assert(userInfoFileHandle != nil)
 
 				if !foundExisting {
-					camera.curr = camera.Camera_new(pos = {0, 5, 0}, front = {0, 0, 1})
+					camera.curr = camera.Camera_new(pos = {-1200, 5, 1200}, front = {0, 0, 1})
 				} else {
 					camera.curr = existingInfo.currCamera
 					inventory.data = existingInfo.inventoryData

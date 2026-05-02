@@ -96,7 +96,7 @@ rc_set :: #force_inline proc "contextless" (x, z: int, c: ^Chunk) {
 // CHUNK_MIDDLE_X_INDEX :: (CHUNKS_PER_DIRECTION / 2)
 // CHUNK_MIDDLE_Z_INDEX :: (CHUNKS_PER_DIRECTION / 2)
 
-ChunkAtTheCenter := int2{}
+// ChunkAtTheCenter := int2{}
 
 WorldArena := vmem.Arena{}
 WorldAllocator := mem.Allocator{}
@@ -190,7 +190,7 @@ chunks_init :: proc(c: ^camera.Camera) {
 	}
 	sync.wait(&chunkWorkersWG)
 
-	ChunkAtTheCenter = rc(half, half).pos
+	// ChunkAtTheCenter = rc(half, half).pos
 
 	// ChunkPrevEnergyCache = make(
 	// 	[dynamic]u16,

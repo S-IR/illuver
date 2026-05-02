@@ -2,6 +2,7 @@ package main
 import "algorithms"
 import "core:fmt"
 import "core:math"
+import "core:math/noise"
 make_point :: #force_inline proc(pt: PointType, light, life, wisdom: u16) -> u16 {
 	p := u16(pt)
 	p = set_light(p, light)
@@ -150,8 +151,142 @@ gorglai_point_type :: proc(
 	topY: i32,
 	seed: u64,
 ) {
+	diffY := topY - worldXYZ.y
+	GORGLAI_ABOVE_LEVEL :: 20
+	GORGLAI_CANYON_LEVEL :: -15
+
+	GORGLAI_UNDERGROUND_LEVEL :: -40
+
+	if worldXYZ.y > GORGLAI_ABOVE_LEVEL {
+		GORGLAI_PEAK_LEVEL :: 55
+
+		STRIP_XZ_SCALE :: .09
+		STRIP_Y_SCALE :: 0.000000002
+		mawbeakNoise := noise.noise_3d_improve_xz(
+		transmute(i64)(seed + 0x864),
+		{
+			f64(worldXYZ.x) * STRIP_XZ_SCALE,
+			f64(worldXYZ.y) * STRIP_Y_SCALE,
+			f64(worldXYZ.z) * STRIP_XZ_SCALE,
+		},
+		// 2,
+		// .5,
+		// .5,
+		)
+		if mawbeakNoise > .45 {
+			points[index_into_point_arrays(index)] = u16(PointType.MawbeakRock)
+			return
+		}
+
+
+		GROUND_SCALE :: 0.0096
+		groundTypeNoise := algorithms.fbm_3d(
+			f64(worldXYZ.x) * GROUND_SCALE,
+			f64(worldXYZ.y) * GROUND_SCALE,
+			f64(worldXYZ.z) * GROUND_SCALE,
+			seed + 0x864,
+			2,
+			.5,
+			.5,
+		)
+		PEAK_STARTING_HEIGHT :: 45
+		PEAK_PADDING :: 10
+
+
+		diffToPeak := f32(
+			math.clamp(f64(worldXYZ.y - PEAK_STARTING_HEIGHT) / f64(PEAK_PADDING), 0.0, 1.0),
+		)
+		peakBlend := f64(diffToPeak) * 0.3
+		adjustedNoise := f64(groundTypeNoise) + peakBlend
+
+		if adjustedNoise > .66 {
+			points[index_into_point_arrays(index)] = u16(PointType.Peakor)
+			return
+		}
+		points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
+		return
+	}
+	if worldXYZ.y > GORGLAI_CANYON_LEVEL && worldXYZ.y <= GORGLAI_ABOVE_LEVEL {
+		GROUND_SCALE :: 0.00096
+		groundTypeNoise := algorithms.fbm_3d(
+			f64(worldXYZ.x) * GROUND_SCALE,
+			f64(worldXYZ.y) * GROUND_SCALE,
+			f64(worldXYZ.z) * GROUND_SCALE,
+			seed + 0x864,
+			2,
+			.5,
+			.5,
+		)
+		if groundTypeNoise > .66 {
+			points[index_into_point_arrays(index)] = u16(PointType.AvigniSoil)
+			return
+		} else if groundTypeNoise > .62 {
+			points[index_into_point_arrays(index)] = u16(PointType.AstanaiGrass)
+			return
+		} else {
+			points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
+			return
+		}
+	}
+	if topY > GORGLAI_UNDERGROUND_LEVEL {
+		// CANYON_TOP_PADDING :: GORGLAI_ABOVE_LEVEL - GORGLAI_CANYON_LEVEL
+		// diffToPeak := f32(
+		// 	math.clamp(f64(worldXYZ.y - GORGLAI_CANYON_LEVEL) / f64(CANYON_TOP_PADDING), 0.0, 1.0),
+		// )
+		// if diffToPeak >= 1.0 {
+		// 	points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
+		// 	return
+		// }
+		// CANYON_GROUND_SCALE_XZ :: 0.004
+		// CANYON_GROUND_SCALE_Y :: 0.001
+
+		// canyonNoise := algorithms.fbm_3d(
+		// 	f64(worldXYZ.x) * CANYON_GROUND_SCALE_XZ,
+		// 	f64(worldXYZ.y) * CANYON_GROUND_SCALE_Y,
+		// 	f64(worldXYZ.z) * CANYON_GROUND_SCALE_XZ,
+		// 	seed + 0x864,
+		// 	2,
+		// 	.5,
+		// 	.5,
+		// )
+		// adjustedNoise := f64(canyonNoise) + f64(diffToPeak) * 0.3
+
+		// if adjustedNoise > .71 {
+		// 	points[index_into_point_arrays(index)] = u16(PointType.Air)
+		// 	return
+		// } else if adjustedNoise > .61 {
+		// 	points[index_into_point_arrays(index)] = u16(PointType.Gorgveil)
+		// 	return
+		// }
+		points[index_into_point_arrays(index)] = u16(PointType.Canyonite)
+		return
+	}
+	if worldXYZ.y != MIN_Y {
+		UNDERGROUND_CANYON_SIZE_XZ :: 0.0078
+		UNDERGROUND_CANYON_SIZE_Y :: 0.0004
+		undergroundCanyonNoise := algorithms.fbm_3d(
+			f64(worldXYZ.x) * UNDERGROUND_CANYON_SIZE_XZ,
+			f64(worldXYZ.y) * UNDERGROUND_CANYON_SIZE_Y,
+			f64(worldXYZ.z) * UNDERGROUND_CANYON_SIZE_XZ,
+			seed + 0x864,
+			2,
+			.5,
+			.5,
+		)
+
+		if undergroundCanyonNoise > .63 {
+			points[index_into_point_arrays(index)] = u16(PointType.Canyonite)
+			return
+		} else if undergroundCanyonNoise > .59 {
+			points[index_into_point_arrays(index)] = u16(PointType.Air)
+			return
+		}
+		points[index_into_point_arrays(index)] = u16(PointType.Avrasar)
+		return
+	}
+	points[index_into_point_arrays(index)] = u16(PointType.Avrasar)
+	return
 	//todo
-	points[index_into_point_arrays(index)] = u16(PointType.Water)
 }
 arakholm_point_type :: proc(
 	points: ^[MAX_POINTS]u16,

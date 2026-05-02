@@ -22,14 +22,18 @@ chunkWorkerThreads: [dynamic]^thread.Thread
 
 
 EditUpdateJob :: struct {
+	frameIndex:   u32,
 	x, y, z:      i32,
 	newPointType: u16,
 }
 EnergyTickJob :: struct {
+	frameIndex:     u32,
 	chunkX, chunkZ: int,
 	energyTickType: bit_set[EnergyType],
 }
-UpdateJob :: struct {}
+UpdateJob :: struct {
+	frameIndex: u32,
+}
 InitJob :: struct {}
 
 ChunkJobType :: union {
@@ -39,10 +43,9 @@ ChunkJobType :: union {
 	EnergyTickJob,
 }
 ChunkJob :: struct {
-	chunk:      ^Chunk,
-	pos:        [2]i32,
-	frameIndex: u32,
-	type:       ChunkJobType,
+	chunk: ^Chunk,
+	pos:   [2]i32,
+	type:  ChunkJobType,
 }
 
 chunkJobQueue: [dynamic]ChunkJob
@@ -110,7 +113,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 			chunk_init(chunk, job.pos, state)
 
 		case UpdateJob:
-			chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
+			chunk_create_gpu_geometry(chunk, state, v.frameIndex)
 		case EditUpdateJob:
 			chunk.points[index_into_point_arrays(v.x, v.y, v.z)] = v.newPointType
 
@@ -133,7 +136,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 				}
 			}
 			irrf_set_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
-			chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
+			chunk_create_gpu_geometry(chunk, state, v.frameIndex)
 		}
 		sync.unlock(&chunk.mutex)
 		sync.wait_group_done(&chunkWorkersWG)
@@ -219,10 +222,9 @@ chunk_init_add_thread :: proc(chunk: ^Chunk, pos: [2]i32) {
 chunk_update_add_thread :: proc(chunk: ^Chunk) {
 
 	job := ChunkJob {
-		chunk      = chunk,
-		frameIndex = vkh.frameIndex,
-		pos        = chunk.pos,
-		type       = UpdateJob{},
+		chunk = chunk,
+		pos = chunk.pos,
+		type = UpdateJob{frameIndex = vkh.frameIndex},
 	}
 	chunk_send_job(job)
 
@@ -232,7 +234,13 @@ chunk_point_edit_add_thread :: proc(chunk: ^Chunk, indexX, indexY, indexZ: i32, 
 	job := ChunkJob {
 		chunk = chunk,
 		pos = chunk.pos,
-		type = EditUpdateJob{x = indexX, y = indexY, z = indexZ, newPointType = newType},
+		type = EditUpdateJob {
+			x = indexX,
+			y = indexY,
+			z = indexZ,
+			newPointType = newType,
+			frameIndex = vkh.frameIndex,
+		},
 	}
 	chunk_send_job(job)
 
@@ -241,7 +249,7 @@ chunk_energy_tick_add_thread :: proc(chunk: ^Chunk, energyTickType: bit_set[Ener
 	job := ChunkJob {
 		chunk = chunk,
 		pos = chunk.pos,
-		type = EnergyTickJob{energyTickType = energyTickType},
+		type = EnergyTickJob{energyTickType = energyTickType, frameIndex = vkh.frameIndex},
 	}
 
 	chunk_send_job(job)

@@ -108,6 +108,22 @@ PointType :: enum u16 {
 	EnchantedPasture,
 	MagicAbsorbingRock,
 	PulsingStone,
+
+	//gorlai
+	// rock at the top
+	Peakor,
+	// strip rock thats meant to go up and down around a mountain
+	MawbeakRock,
+	// mushroom red soil
+	AvigniSoil,
+	// default gorglai dirt
+	Gorgveil,
+	// wild life product grass
+	AstanaiGrass,
+	// first level rock gorglai
+	Canyonite,
+	// second level rock gorglai
+	Avrasar,
 }
 #assert(len(PointType) < 1024)
 

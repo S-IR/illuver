@@ -20,14 +20,14 @@ Biome :: enum {
 }
 BiomeWeights :: [Biome]u8
 BiomeSpacesPerValues :: [Biome][3]f64 {
-	.Crystalbloom = {.3, .2, .4},
-	.Gorglai      = {1, .1, .6},
-	.Arakholm     = {.7, .2, .1},
-	.Merplia      = {.4, 1, .5},
-	.Wintercrown  = {.7, .1, .6},
-	.Scholathorn  = {.5, .3, .5},
-	.Adwaron      = {.6, .4, .4},
-	.Etherwind    = {.2, .3, 1},
+	.Crystalbloom = {0.35, 0.35, 0.35},
+	.Gorglai      = {0.65, 0.35, 0.35},
+	.Arakholm     = {0.35, 0.65, 0.35},
+	.Merplia      = {0.65, 0.65, 0.35},
+	.Wintercrown  = {0.35, 0.35, 0.65},
+	.Scholathorn  = {0.65, 0.35, 0.65},
+	.Adwaron      = {0.35, 0.65, 0.65},
+	.Etherwind    = {0.65, 0.65, 0.65},
 }
 
 procedural_point_type_noise_result :: proc(x, y, z: i32, seed: u64, biome: Biome) -> f32 {
@@ -112,7 +112,7 @@ get_major_biome :: proc(x, z: i32, seed: u64) -> Biome {
 	return biome
 }
 get_biome_weights :: proc(x, z: i32, seed: u64) -> (biomeWeights: BiomeWeights) {
-	HEIGHT_MAP_SCALE :: .002
+	HEIGHT_MAP_SCALE :: .0009
 	ruggedness1 := algorithms.fbm_2d(
 		f64(x) * HEIGHT_MAP_SCALE,
 		f64(z) * HEIGHT_MAP_SCALE,
