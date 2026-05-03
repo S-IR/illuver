@@ -1,4 +1,4 @@
-package main
+ipackage main
 import "algorithms"
 import "core:fmt"
 import "core:math"
