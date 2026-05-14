@@ -3,6 +3,7 @@ import "algorithms"
 import "core:fmt"
 import "core:math"
 import "core:math/noise"
+import "core:math/rand"
 make_point :: #force_inline proc(pt: PointType, light, life, wisdom: u16) -> u16 {
 	p := u16(pt)
 	p = set_light(p, light)
@@ -14,14 +15,18 @@ make_point :: #force_inline proc(pt: PointType, light, life, wisdom: u16) -> u16
 
 biome_point_type :: #force_inline proc(
 	points: ^[MAX_POINTS]u16,
+	heightMap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
 	biome: Biome,
 	worldXYZ, index: [3]i32,
 	topY: i32,
 	seed: u64,
 ) {
+	if u16_to_point_type(points[index_into_point_arrays(index)]) != .Air {
+		return
+	}
 	switch biome {
 	case .Crystalbloom:
-		crystalbloom_point_type(points, worldXYZ, index, topY, seed)
+		crystalbloom_point_type(points, heightMap, worldXYZ, index, topY, seed)
 		return
 	case .Gorglai:
 		gorglai_point_type(points, worldXYZ, index, topY, seed)
@@ -48,7 +53,7 @@ biome_point_type :: #force_inline proc(
 		return
 
 	case .Etherwind:
-		etherwind_point_type(points, worldXYZ, index, topY, seed)
+		etherwind_point_type(points, heightMap, worldXYZ, index, topY, seed)
 		return
 	}
 	unreachable()
@@ -56,6 +61,7 @@ biome_point_type :: #force_inline proc(
 
 crystalbloom_point_type :: proc(
 	points: ^[MAX_POINTS]u16,
+	heightMap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
 	worldXYZ, index: [3]i32,
 	topY: i32,
 	seed: u64,
@@ -70,7 +76,7 @@ crystalbloom_point_type :: proc(
 
 	if diffY < CRYSTALBLOOM_LOAM_DEPTH {
 		GRASS_SCALE :: 0.02
-		noise := algorithms.fbm_3d(
+		fbmNoise := algorithms.fbm_3d(
 			f64(worldXYZ.x) * GRASS_SCALE,
 			f64(worldXYZ.y) * GRASS_SCALE,
 			f64(worldXYZ.z) * GRASS_SCALE,
@@ -79,17 +85,46 @@ crystalbloom_point_type :: proc(
 			.5,
 			.5,
 		)
-		if noise > 0.78 {
-			points[index_into_point_arrays(index)] = u16(PointType.BlueDiamond)
-			return
-		} else if noise > 0.66 {
-			points[index_into_point_arrays(index)] = u16(PointType.BlackCliff)
-			return
-		} else {
-			points[index_into_point_arrays(index)] = u16(PointType.BlueDiamond)
-			return
+		chosenBlock := u16(PointType.BlueDiamond)
+		if fbmNoise > 0.78 {
+			chosenBlock = u16(PointType.LightPurpleGround)
+		} else if fbmNoise > 0.60 {
+			chosenBlock = u16(PointType.BlackCliff)
+		}
+
+		if chosenBlock != u16(PointType.BlueDiamond) {
+			TREE_SCALE: f64 : .5
+			decoratorNoise := noise.noise_2d(
+				transmute(i64)seed,
+				{f64(worldXYZ.x) * TREE_SCALE, f64(worldXYZ.z) * TREE_SCALE},
+			)
+			decoratorIf: if worldXYZ.y == topY && rand.float32() < .02 {
+				MIN_TREE_RADIUS :: 3
+				leavesRadius: i32 = MIN_TREE_RADIUS + i32(math.round(rand.float32() * 2))
+
+				MIN_HEIGHT_SIZE :: 12
+				treeUpperBound: i32 = MIN_HEIGHT_SIZE + 1 + i32(math.round(decoratorNoise * 6))
+				treeUpperBoundY := worldXYZ.y + treeUpperBound
+
+				lowerBoundV2 := index.xz - leavesRadius
+				upperBoundV2 := index.xz + leavesRadius
+				if chunk_point_oob({lowerBoundV2[0], index.y, lowerBoundV2[1]}) do break decoratorIf
+				if chunk_point_oob({upperBoundV2[0], treeUpperBoundY + leavesRadius - MIN_Y, upperBoundV2[1]}) do break decoratorIf
+
+				crystalbloom_create_tree(
+					points = points,
+					heightMap = heightMap,
+					worldXYZ = worldXYZ,
+					index = index,
+					treeUpperBoundY = treeUpperBoundY,
+					decoratorNoise = decoratorNoise,
+					leavesRadius = leavesRadius,
+				)
+			}
 
 		}
+		points[index_into_point_arrays(index)] = chosenBlock
+		return
 
 	}
 
@@ -397,6 +432,7 @@ adwaron_point_type :: proc(
 
 etherwind_point_type :: proc(
 	points: ^[MAX_POINTS]u16,
+	heightMap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
 	worldXYZ, index: [3]i32,
 	topY: i32,
 	seed: u64,
@@ -423,13 +459,14 @@ energy_from_noise :: #force_inline proc(
 }
 biome_point :: #force_inline proc(
 	points: ^[MAX_POINTS]u16,
+	heightMap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
 	biome: Biome,
 	worldXYZ, index: [3]i32,
 	topY: i32,
 	seed: u64,
 ) {
 
-	biome_point_type(points, biome, worldXYZ, index, topY, seed)
+	biome_point_type(points, heightMap, biome, worldXYZ, index, topY, seed)
 
 	if points[index_into_point_arrays(index)] == 0 do return
 

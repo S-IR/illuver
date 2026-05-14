@@ -357,7 +357,8 @@ chunk_geometry_calculate :: proc(
 	vma.map_memory(vkh.allocator, chunk.buffers.compute.counter.alloc, &countersPtr)
 	counts := (^u32)(countersPtr)
 	chunk.totalPoints = counts^
-	assert(chunk.totalPoints > 0)
+	// Empty chunks (e.g. all-air sky chunks) legitimately produce zero vertices;
+	// CmdDraw(0, ...) is valid, so don't assert nonzero.
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
 
 
@@ -367,7 +368,7 @@ chunk_copy_current_to_other_frames :: proc(
 	state: ^ChunkWorkerState,
 	currentFrame: u32,
 ) {
-	assert(chunk.totalPoints > 0)
+	if chunk.totalPoints == 0 do return
 	vk.ResetCommandBuffer(state.computeCB, {})
 	vk.BeginCommandBuffer(
 		state.computeCB,
@@ -377,7 +378,6 @@ chunk_copy_current_to_other_frames :: proc(
 	srcVert := chunk.buffers.compute.stagingVertices.buffer
 	copySizeVert := vk.DeviceSize(CHUNK_GPU_VERTEX_BUFFER_SIZE)
 
-	barrierCount := 0
 	barriers: [vkh.MAX_FRAMES_IN_FLIGHT]vk.BufferMemoryBarrier
 
 	for &barrier, i in barriers {
@@ -406,8 +406,8 @@ chunk_copy_current_to_other_frames :: proc(
 		{},
 		0,
 		nil,
-		u32(barrierCount),
-		raw_data(barriers[:barrierCount]),
+		u32(len(barriers)),
+		raw_data(barriers[:]),
 		0,
 		nil,
 	)

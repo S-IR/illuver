@@ -140,7 +140,7 @@ inventory_get_selected_point :: proc(inventory: ^Inventory) -> PointType {
 	return inventory.data.spellbar.spells[inventory.data.spellbar.selected].val
 }
 inventory_reduce_amount_from_selected :: proc(inventory: ^Inventory) {
-	assert(inventory.data.spellbar.selected != 1)
+	assert(inventory.data.spellbar.selected < len(inventory.data.spellbar.spells))
 	assert(inventory.data.spellbar.spells[inventory.data.spellbar.selected] != {})
 	inventory.data.spellbar.spells[inventory.data.spellbar.selected].count -= 1
 	if inventory.data.spellbar.spells[inventory.data.spellbar.selected].count == 0 {

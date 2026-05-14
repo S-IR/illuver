@@ -6,7 +6,6 @@ import vk "vendor:vulkan"
 
 import "../../modules/tracy"
 import "../gs"
-import "core:log"
 import os "core:os"
 import "core:sync"
 import sdl "vendor:sdl3"
@@ -22,8 +21,14 @@ physicalDevice: vk.PhysicalDevice
 
 graphicsQueueFamilyIndex: u32 = max(u32)
 computeQueueFamilyIndex: u32 = max(u32)
+
 graphicsQueue: vk.Queue
+graphicsQueueMutex: sync.Mutex
+
 computeQueue: vk.Queue
+computeCommandPool: vk.CommandPool
+// computeCommandBuffers: [MAX_FRAMES_IN_FLIGHT]vk.CommandBuffer
+computeQueueMutex: sync.Mutex
 
 device: vk.Device
 
@@ -61,28 +66,25 @@ copyTimelineValue: u64
 drawCommandPool: vk.CommandPool
 drawCommandBuffers := [MAX_FRAMES_IN_FLIGHT]vk.CommandBuffer{}
 
-computeCommandPool: vk.CommandPool
-// computeCommandBuffers: [MAX_FRAMES_IN_FLIGHT]vk.CommandBuffer
-computeQueueMutex: sync.Mutex
 
 updateSwapchain: bool
 frameIndex: u32 = 0
 imageIndex: u32 = 0
-
-MAX_FRAMES_IN_FLIGHT: u32 : 2
+swapchainExtent: vk.Extent2D
+MAX_FRAMES_IN_FLIGHT: u32 : 3
 MAX_DEFERRED_RELEASES :: 128
 
-VkBufferPoolElem :: struct {
+BufferAlloc :: struct {
 	buffer: vk.Buffer,
 	alloc:  vma.Allocation,
 }
 
-cameraBuffers := [MAX_FRAMES_IN_FLIGHT]VkBufferPoolElem{}
+cameraBuffers := [MAX_FRAMES_IN_FLIGHT]BufferAlloc{}
 
 
 deferredBufferReleases: [MAX_FRAMES_IN_FLIGHT]small_array.Small_Array(
 	MAX_DEFERRED_RELEASES,
-	VkBufferPoolElem,
+	BufferAlloc,
 )
 
 CameraUBO :: struct {
@@ -95,11 +97,10 @@ PipelineData :: struct {
 	layout:              vk.PipelineLayout,
 	pipeline:            vk.Pipeline,
 }
-pipeline_data_delete :: proc(p: PipelineData) {
+pipeline_destroy :: proc(p: PipelineData) {
 	if p.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(device, p.descriptorSetLayout, nil)
 	if p.layout != {} do vk.DestroyPipelineLayout(device, p.layout, nil)
 	if p.pipeline != {} do vk.DestroyPipeline(device, p.pipeline, nil)
-
 }
 
 vulkan_init :: proc() {
@@ -369,6 +370,7 @@ vulkan_init :: proc() {
 				&swapchain,
 			),
 		)
+		swapchainExtent = vk_resolve_extent(surfaceCaps)
 		vk.GetSwapchainImagesKHR(device, swapchain, &imageCount, nil)
 		swapchainImages = make([dynamic]vk.Image, imageCount)
 		swpachainImageViews = make([dynamic]vk.ImageView, imageCount)
@@ -654,13 +656,12 @@ vulkan_init :: proc() {
 
 }
 
-chk :: proc(r: vk.Result) {
+chk :: proc(r: vk.Result, loc := #caller_location) {
 	if r != .SUCCESS {
-		when ODIN_DEBUG {
-			log.fatalf("[VULKAN RETURN ERROR]: %s", fmt.enum_value_to_string(r))
-		} else {
-			fmt.eprintf("[VULKAN RETURN ERROR]: %s", fmt.enum_value_to_string(r))
-		}
+		// log.fatalf in core:log writes at fatal severity but does NOT terminate
+		// the process — continuing past a failed Vulkan call would use garbage
+		// handles. Use panicf so execution actually stops.
+		fmt.panicf("[VULKAN RETURN ERROR]: %s (at %v)", fmt.enum_value_to_string(r), loc)
 	}
 }
 
@@ -732,45 +733,101 @@ vulkan_cleanup :: proc() {
 
 
 }
-
 vulkan_update_swapchain :: proc() {
-	if updateSwapchain == false do return
-	defer updateSwapchain = false
-	chk(vk.DeviceWaitIdle(device))
+	if !updateSwapchain do return
+	updateSwapchain = false
+
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		// Wait indefinitely: if we proceed to release the per-frame staging
+		// buffers while the GPU still references them we get a use-after-free.
+		chk(vk.WaitForFences(device, 1, &fences[i], true, max(u64)))
+		vk_run_deferred_buffer_releases(i)
+	}
 
 	surfaceCaps: vk.SurfaceCapabilitiesKHR
 	chk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps))
 
-	oldSwapchain := swapchain
-
-	swapchainCI := vk.SwapchainCreateInfoKHR {
-		sType = .SWAPCHAIN_CREATE_INFO_KHR,
-		surface = surface,
-		minImageCount = surfaceCaps.minImageCount,
-		imageFormat = swapchainImageFormat,
-		imageColorSpace = swapchainColorSpace,
-		imageExtent = {width = gs.screenWidth, height = gs.screenHeight},
-		imageArrayLayers = 1,
-		imageUsage = {.COLOR_ATTACHMENT},
-		preTransform = {.IDENTITY},
-		compositeAlpha = {.OPAQUE},
-		presentMode = .FIFO,
-		oldSwapchain = oldSwapchain,
+	extent := surfaceCaps.currentExtent
+	if extent.width == max(u32) || extent.height == max(u32) {
+		extent = {
+			width  = clamp(
+				gs.screenWidth,
+				surfaceCaps.minImageExtent.width,
+				surfaceCaps.maxImageExtent.width,
+			),
+			height = clamp(
+				gs.screenHeight,
+				surfaceCaps.minImageExtent.height,
+				surfaceCaps.maxImageExtent.height,
+			),
+		}
 	}
 
-	chk(vk.CreateSwapchainKHR(device, &swapchainCI, nil, &swapchain))
+	if extent.width == 0 || extent.height == 0 {
+		updateSwapchain = true
+		return
+	}
+
+	oldSwapchain := swapchain
+
+	ci := vk.SwapchainCreateInfoKHR {
+		sType            = .SWAPCHAIN_CREATE_INFO_KHR,
+		surface          = surface,
+		minImageCount    = surfaceCaps.minImageCount,
+		imageFormat      = swapchainImageFormat,
+		imageColorSpace  = swapchainColorSpace,
+		imageExtent      = extent,
+		imageArrayLayers = 1,
+		imageUsage       = {.COLOR_ATTACHMENT},
+		preTransform     = surfaceCaps.currentTransform,
+		compositeAlpha   = {.OPAQUE},
+		presentMode      = .FIFO,
+		oldSwapchain     = oldSwapchain,
+		clipped          = true,
+	}
+
+	chk(vk.CreateSwapchainKHR(device, &ci, nil, &swapchain))
+	swapchainExtent = extent
+
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		if presentSemaphores[i] != {} {
+			vk.DestroySemaphore(device, presentSemaphores[i], nil)
+		}
+		chk(
+			vk.CreateSemaphore(
+				device,
+				&vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO},
+				nil,
+				&presentSemaphores[i],
+			),
+		)
+	}
 
 	for view in swpachainImageViews {
-		vk.DestroyImageView(device, view, nil)
+		if view != {} do vk.DestroyImageView(device, view, nil)
 	}
 
 	chk(vk.GetSwapchainImagesKHR(device, swapchain, &imageCount, nil))
-	clear_dynamic_array(&swapchainImages)
 	resize(&swapchainImages, imageCount)
-
-	clear_dynamic_array(&swpachainImageViews)
 	resize(&swpachainImageViews, imageCount)
 	chk(vk.GetSwapchainImagesKHR(device, swapchain, &imageCount, raw_data(swapchainImages)))
+
+	// renderSemaphores is indexed by imageIndex; if the swapchain returns a
+	// different image count after recreation, we'd otherwise read/write OOB.
+	semaphoreCI := vk.SemaphoreCreateInfo {
+		sType = .SEMAPHORE_CREATE_INFO,
+	}
+	if u32(len(renderSemaphores)) != imageCount {
+		for s in renderSemaphores {
+			if s != {} do vk.DestroySemaphore(device, s, nil)
+		}
+		delete(renderSemaphores)
+		renderSemaphores = make([]vk.Semaphore, imageCount)
+		for &s in renderSemaphores {
+			chk(vk.CreateSemaphore(device, &semaphoreCI, nil, &s))
+		}
+	}
+	assert(u32(len(renderSemaphores)) == imageCount)
 
 	for i in 0 ..< imageCount {
 		viewCI := vk.ImageViewCreateInfo {
@@ -780,11 +837,10 @@ vulkan_update_swapchain :: proc() {
 			format = swapchainImageFormat,
 			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 		}
-
 		chk(vk.CreateImageView(device, &viewCI, nil, &swpachainImageViews[i]))
 	}
 
-	vk.DestroySwapchainKHR(device, oldSwapchain, nil)
+	if oldSwapchain != {} do vk.DestroySwapchainKHR(device, oldSwapchain, nil)
 
 	vk.DestroyImageView(device, depthImageView, nil)
 	vma.destroy_image(allocator, depthImage, vmaDepthStencilAlloc)
@@ -793,19 +849,17 @@ vulkan_update_swapchain :: proc() {
 		sType = .IMAGE_CREATE_INFO,
 		imageType = .D2,
 		format = depthFormat,
-		extent = {width = gs.screenWidth, height = gs.screenHeight, depth = 1},
+		extent = {width = swapchainExtent.width, height = swapchainExtent.height, depth = 1},
 		mipLevels = 1,
 		arrayLayers = 1,
 		samples = {._1},
 		tiling = .OPTIMAL,
 		usage = {.DEPTH_STENCIL_ATTACHMENT},
 	}
-
 	allocCI := vma.Allocation_Create_Info {
 		flags = {.Dedicated_Memory},
 		usage = .Auto,
 	}
-
 	chk(
 		vma.create_image(
 			allocator,
@@ -822,14 +876,20 @@ vulkan_update_swapchain :: proc() {
 		image = depthImage,
 		viewType = .D2,
 		format = depthFormat,
-		subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
+		subresourceRange = {
+			aspectMask = vk.ImageAspectFlags{.DEPTH} if depthFormat == .D32_SFLOAT else vk.ImageAspectFlags{.DEPTH, .STENCIL},
+			levelCount = 1,
+			layerCount = 1,
+		},
 	}
-
 	chk(vk.CreateImageView(device, &depthViewCI, nil, &depthImageView))
+
+	frameIndex = 0
 }
+
 vk_chk_swapchain :: proc(r: vk.Result) {
 	if r != .SUCCESS {
-		if r == .ERROR_OUT_OF_DATE_KHR {
+		if r == .ERROR_OUT_OF_DATE_KHR || r == .SUBOPTIMAL_KHR {
 			updateSwapchain = true
 		} else {
 			chk(r)

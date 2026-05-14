@@ -155,13 +155,13 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 			DESIRED_CHANNELS :: 4
 
 			if image.uri != nil {
-				modelDir := filepath.dir(path, context.temp_allocator)
+				modelDir := filepath.dir(path)
 				uriNormalString := strings.clone_from_cstring(image.uri, context.temp_allocator)
 				finalPath, joinErr := filepath.join(
 					{modelDir, uriNormalString},
 					context.temp_allocator,
 				)
-				ensure(joinErr != nil)
+				ensure(joinErr == nil)
 				finalPathCstring := strings.clone_to_cstring(finalPath, context.temp_allocator)
 				assert(os.exists(finalPath))
 
@@ -246,7 +246,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 				),
 			)
 			posPtr: rawptr
-			vma.map_memory(allocator, renderObj.primitive.posAlloc, &posPtr)
+			chk(vma.map_memory(allocator, renderObj.primitive.posAlloc, &posPtr))
 			floatsReadPos := c.accessor_unpack_floats(posAcc, cast([^]f32)posPtr, vertexCount * 3)
 			assert(floatsReadPos == vertexCount * 3)
 			vma.unmap_memory(allocator, renderObj.primitive.posAlloc)
@@ -269,7 +269,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 				),
 			)
 			normPtr: rawptr
-			vma.map_memory(allocator, renderObj.primitive.normAlloc, &normPtr)
+			chk(vma.map_memory(allocator, renderObj.primitive.normAlloc, &normPtr))
 
 			floatsReadNorm := c.accessor_unpack_floats(
 				normAcc,
@@ -298,7 +298,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 			)
 
 			uvPtr: rawptr
-			vma.map_memory(allocator, renderObj.primitive.uvAlloc, &uvPtr)
+			chk(vma.map_memory(allocator, renderObj.primitive.uvAlloc, &uvPtr))
 			floatsReadUv := c.accessor_unpack_floats(uvAcc, cast([^]f32)uvPtr, vertexCount * 2)
 			assert(floatsReadUv == vertexCount * 2)
 			vma.unmap_memory(allocator, renderObj.primitive.uvAlloc)
@@ -329,7 +329,7 @@ read_gltf_model :: proc(path: string, cb: vk.CommandBuffer) -> (model: Model) //
 					),
 				)
 				indexPtr: ^u8
-				vma.map_memory(allocator, renderObj.primitive.indexAlloc, (^rawptr)(&indexPtr))
+				chk(vma.map_memory(allocator, renderObj.primitive.indexAlloc, (^rawptr)(&indexPtr)))
 				defer vma.unmap_memory(allocator, renderObj.primitive.indexAlloc)
 
 
@@ -394,17 +394,12 @@ model_destroy :: proc(m: Model) {
 }
 @(private)
 cgltf_filter_type_to_vk_filter :: proc(t: c.filter_type) -> (vkT: vk.Filter) {
+	// Odin switch cases do NOT fall through; each case must set vkT.
 	switch t {
-	case .linear_mipmap_linear:
-	case .linear:
-	case .linear_mipmap_nearest:
-	case .undefined:
+	case .linear_mipmap_linear, .linear, .linear_mipmap_nearest, .undefined:
 		vkT = .LINEAR
-	case .nearest:
-	case .nearest_mipmap_nearest:
-	case .nearest_mipmap_linear:
+	case .nearest, .nearest_mipmap_nearest, .nearest_mipmap_linear:
 		vkT = .NEAREST
-
 	}
 	return vkT
 }

@@ -109,7 +109,7 @@ irrf_set_chunk :: proc(
 					irrfFile.handle, osErr = os.open(irrfFile.path, {.Read, .Write})
 					ensure(osErr == nil, "could not open irrf file")
 				} else {
-					osErr = os.mkdir_all(filepath.dir(irrfFile.path, context.temp_allocator))
+					osErr = os.mkdir_all(filepath.dir(irrfFile.path))
 					if osErr != .Exist do ensure(osErr == nil)
 					irrfFile.handle, osErr = os.create(irrfFile.path)
 					ensure(osErr == nil)
@@ -139,7 +139,7 @@ irrf_set_chunk :: proc(
 		irrfFile.initialized[indexIntoIrrfScalar] = true
 
 
-		tempPath := fmt.tprintf("%s.tmp", irrfFile.path, context.temp_allocator)
+		tempPath := fmt.tprintf("%s.tmp", irrfFile.path)
 		tempHandle, err := os.create(tempPath)
 		// defer _ = os.remove(tempPath)
 		ensure(err == nil)
@@ -265,11 +265,17 @@ irrf_compress_to_file :: proc(handle: ^os.File, data: []byte) {
 }
 
 irrf_decompress_to_buffer :: proc(handle: ^os.File, out: []byte) {
-	fileSize, _ := os.file_size(handle)
+	fileSize, fileSizeErr := os.file_size(handle)
+	ensure(fileSizeErr == nil)
+	// Guard against truncated files: without this, the subtraction underflows
+	// (i64) and we make a multi-exabyte allocation that OOMs the process.
+	ensure(fileSize >= IRRF_HEADER_SIZE, "irrf file is truncated below header")
 	compressed := make([]byte, fileSize - IRRF_HEADER_SIZE, context.temp_allocator)
 
-	os.seek(handle, IRRF_HEADER_SIZE, .Start)
-	_, osErr := os.read(handle, compressed)
+	_, seekErr := os.seek(handle, IRRF_HEADER_SIZE, .Start)
+	ensure(seekErr == nil)
+	_, readErr := os.read(handle, compressed)
+	ensure(readErr == nil)
 	decompressed := lz4.decompress_safe(
 		raw_data(compressed),
 		raw_data(out),

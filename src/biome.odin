@@ -77,6 +77,7 @@ inv255 :: 1.0 / 255.0
 when !VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 	procedural_point_type :: proc(
 		points: ^[MAX_POINTS]u16,
+		heightMap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
 		weights: BiomeWeights,
 		worldXYZ: [3]i32,
 		index: [3]i32,
@@ -92,7 +93,7 @@ when !VISUAL_REPRESENTATION_OF_NOISE_FN_RUN {
 			prob := f32(weight) * inv255
 			cumulator += prob
 			if selector < cumulator {
-				biome_point(points, biome, worldXYZ, index, topY, seed)
+				biome_point(points, heightMap, biome, worldXYZ, index, topY, seed)
 				return
 			}
 		}

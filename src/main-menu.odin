@@ -14,7 +14,9 @@ main_menu_render :: proc(mainMenuFont: ui.BMFont, ms: MouseState, renderData: st
 		uiPipeline: ^vkh.PipelineData,
 	}) {
 	cb := vkh.drawCommandBuffers[vkh.frameIndex]
-	vk_begin_frame(cb)
+	vk_start_frame_commands(cb)
+
+	if vk_begin_frame(cb) do return
 	ui.add_rect(0, 0, f32(gs.screenWidth), f32(gs.screenHeight), [4]f32{0.5, 0.5, 0.5, 1})
 
 	currY: f32 = 50
@@ -98,7 +100,10 @@ sp_realm_menu_render :: proc(mainMenuFont: ui.BMFont, ms: MouseState, renderData
 		uiPipeline: ^vkh.PipelineData,
 	}) {
 	cb := vkh.drawCommandBuffers[vkh.frameIndex]
-	vk_begin_frame(cb)
+	vk_start_frame_commands(cb)
+
+	if vk_begin_frame(cb) do return
+
 	ui.add_rect(0, 0, f32(gs.screenWidth), f32(gs.screenHeight), [4]f32{1, 1, 1, 1})
 
 	currY: f32 = 50
@@ -172,7 +177,9 @@ loading_screen_render :: proc(mainMenuFont: ui.BMFont, renderData: struct {
 		uiPipeline: ^vkh.PipelineData,
 	}) {
 	cb := vkh.drawCommandBuffers[vkh.frameIndex]
-	vk_begin_frame(cb)
+	vk_start_frame_commands(cb)
+	if vk_begin_frame(cb) do return
+
 	ui.add_rect(0, 0, f32(gs.screenWidth), f32(gs.screenHeight), [4]f32{0.1, 0.1, 0.1, 1})
 
 	textWidth, textHeight := ui.measure_text("Loading...", mainMenuFont, 32)

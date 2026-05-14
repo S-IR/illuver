@@ -61,7 +61,7 @@ ui_create_dummy_texture :: proc(cb: vk.CommandBuffer) {
 	vkDummyTexture.id = VK_UI_DUMMY_TEXTURE_ID
 }
 // vkTextFonts: small_array.Small_Array(MAX_TEXT_FONTS, UIBatch)
-vkUIVertexBuffers: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem
+vkUIVertexBuffers: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc
 init :: proc(cb: vk.CommandBuffer) -> (p: vkh.PipelineData) {
 	ui_create_dummy_texture(cb)
 

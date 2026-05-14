@@ -50,7 +50,7 @@ load_image :: proc(
 	)
 
 	poolIndex := small_array.len(deferredBufferReleases[frameIndex])
-	small_array.append(&deferredBufferReleases[frameIndex], VkBufferPoolElem{})
+	small_array.append(&deferredBufferReleases[frameIndex], BufferAlloc{})
 
 	poolElem := small_array.get_ptr(&deferredBufferReleases[frameIndex], poolIndex)
 	imgSrcBuffer := &poolElem.buffer
@@ -72,6 +72,7 @@ load_image :: proc(
 	)
 	imgSrcBufferPtr: rawptr
 	chk(vma.map_memory(allocator, imgSrcAllocation^, &imgSrcBufferPtr))
+	assert(imgSrcBufferPtr != nil)
 	mem.copy(imgSrcBufferPtr, pi.data, int(pi.width) * int(pi.height) * int(pi.channels))
 
 

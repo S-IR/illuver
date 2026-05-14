@@ -52,8 +52,8 @@ float3 worldPosition(int3 local) {
 }
 
 static const int3 triVerts[6][3] = {
-  { int3(0, 0, 0), int3(1, 0, 0), int3(1, 1, 0) },
-  { int3(0, 0, 0), int3(1, 1, 0), int3(0, 1, 0) },
+  { int3(0, 0, 0), int3(1, 1, 0), int3(1, 0, 0) },
+  { int3(0, 0, 0), int3(0, 1, 0), int3(1, 1, 0) },
   { int3(0, 0, 0), int3(0, 0, 1), int3(0, 1, 1) },
   { int3(0, 0, 0), int3(0, 1, 1), int3(0, 1, 0) },
   { int3(0, 0, 0), int3(1, 0, 0), int3(1, 0, 1) },
@@ -123,12 +123,24 @@ void main(uint3 id: SV_DispatchThreadID) {
     float3 pos1 = worldPosition(cell + v1);
     float3 pos2 = worldPosition(cell + v2);
 
-    uint offset = vIdx * 16; // 16 bytes per vertex
+    float3 normal = normalize(cross(pos1 - pos0, pos2 - pos0));
+
+    uint offset = vIdx * 32; // stride = 32
+
+    // Vertex 0
     vertsOut.Store3(offset + 0, asuint(pos0));
-    vertsOut.Store(offset + 12, uint(p0));
-    vertsOut.Store3(offset + 16, asuint(pos1));
-    vertsOut.Store(offset + 28, uint(p1));
-    vertsOut.Store3(offset + 32, asuint(pos2));
-    vertsOut.Store(offset + 44, uint(p2));
+    vertsOut.Store3(offset + 12, asuint(normal));
+    vertsOut.Store(offset + 24, uint(p0));
+    // offset+28 is padding – leave as zero (no need to write)
+
+    // Vertex 1
+    vertsOut.Store3(offset + 32, asuint(pos1));
+    vertsOut.Store3(offset + 44, asuint(normal));
+    vertsOut.Store(offset + 56, uint(p1));
+
+    // Vertex 2
+    vertsOut.Store3(offset + 64, asuint(pos2));
+    vertsOut.Store3(offset + 76, asuint(normal));
+    vertsOut.Store(offset + 88, uint(p2));
   }
 }

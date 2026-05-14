@@ -126,7 +126,7 @@ main :: proc() {
 
 
 		uiPipeline = ui.init(loadCb)
-		dejaVuPath :=
+		dejaVuPath ::
 			"assets" +
 			filepath.SEPARATOR_STRING +
 			"fonts" +
@@ -135,6 +135,7 @@ main :: proc() {
 			filepath.SEPARATOR_STRING +
 			"DejaVuSans-Bold.json"
 		// ensure(adwaitaFontPathJoinError == nil)
+		#assert(#exists("../build/" + dejaVuPath))
 		font = ui.bmfont_json_load(dejaVuPath, loadCb)
 
 		inventory = inventory_init(loadCb, font)
@@ -187,10 +188,17 @@ main :: proc() {
 
 
 	chunkGeometryCalcPipeline = chunk_geometry_calc_pipeline_init()
-	when ODIN_DEBUG do defer vkh.pipeline_data_delete(chunkGeometryCalcPipeline)
+	when ODIN_DEBUG do defer vkh.pipeline_destroy(chunkGeometryCalcPipeline)
 
 	highlightSphere := highlight_sphere_init()
 	when ODIN_DEBUG do defer highlight_sphere_destroy(&highlightSphere)
+
+	sunBuffer := sun_ubo_buffer_init()
+	sunUBO: SunUBO
+	when ODIN_DEBUG do defer sun_ubo_buffer_destroy(sunBuffer)
+
+	sunRenderData := sun_render_data_init()
+	when ODIN_DEBUG do defer sun_render_data_destroy(&sunRenderData)
 
 
 	e: sdl.Event
@@ -242,6 +250,7 @@ main :: proc() {
 		gs.LastWisdomTick = energyTickNow
 		gs.LastLightTick = energyTickNow
 
+		gs.WorldStartedAt = time.now()
 		gs.CurrGameScreen = .Game
 
 	}
@@ -313,7 +322,13 @@ main :: proc() {
 
 
 			case .WINDOW_RESIZED:
-				gs.screenWidth, gs.screenHeight = u32(e.window.data1), u32(e.window.data2)
+				newW, newH := u32(e.window.data1), u32(e.window.data2)
+				// SDL emits resize events with 0 width/height when the window is
+				// minimized; clamping to >=1 prevents NaN proj/ortho matrices
+				// downstream. The swapchain code already retries on a 0-extent
+				// surface, so the chain will catch up once the window is restored.
+				if newW == 0 || newH == 0 do break
+				gs.screenWidth, gs.screenHeight = newW, newH
 				if gs.screenWidth != prevScreenWidth || gs.screenHeight != prevScreenHeight {
 					vkh.updateSwapchain = true
 				}
@@ -337,13 +352,9 @@ main :: proc() {
 				continue
 			}
 		}
-		if prevScreenWidth != gs.screenWidth || prevScreenHeight != gs.screenHeight {
-			sdl.SetWindowSize(gs.window, i32(gs.screenWidth), i32(gs.screenHeight))
-			vkh.updateSwapchain = true
-			sdl.SyncWindow(gs.window)
-		}
-		leftClickIsHeldThisFrame := .LEFT in sdl.GetMouseState(nil, nil)
+
 		vkh.vulkan_update_swapchain()
+		leftClickIsHeldThisFrame := .LEFT in sdl.GetMouseState(nil, nil)
 
 
 		currLeft := .LEFT in sdl.GetMouseState(nil, nil)
@@ -371,7 +382,7 @@ main :: proc() {
 				assert(userInfoFileHandle != nil)
 
 				if !foundExisting {
-					camera.curr = camera.Camera_new(pos = {-1700, 5, 900}, front = {0, 0, 1})
+					camera.curr = camera.Camera_new(pos = {0, 5, 0}, front = {0, 0, 1})
 				} else {
 					camera.curr = existingInfo.currCamera
 					inventory.data = existingInfo.inventoryData
@@ -423,9 +434,10 @@ main :: proc() {
 				pressedRightClickThisFrame,
 				{
 					highlightSpere = &highlightSphere,
-					pointTrianglePipeline = &pointTrianglePipeline,
-					pointDotPipeline = &pointDotPipeline,
-					uiPipeline = &uiPipeline,
+					pointTrianglePipeline = pointTrianglePipeline,
+					pointDotPipeline = pointDotPipeline,
+					uiPipeline = uiPipeline,
+					sun = {uboBuffer = sunBuffer, ubo = &sunUBO, renderData = &sunRenderData},
 				},
 			)
 
@@ -441,18 +453,20 @@ game_render :: proc(
 	leftClickIsHeldThisFrame, pressedRightClickThisFrame: bool,
 	renderData: struct {
 		highlightSpere:        ^HighlightSphere,
-		pointTrianglePipeline: ^vkh.PipelineData,
-		pointDotPipeline:      ^vkh.PipelineData,
-		uiPipeline:            ^vkh.PipelineData,
+		pointTrianglePipeline: vkh.PipelineData,
+		pointDotPipeline:      vkh.PipelineData,
+		uiPipeline:            vkh.PipelineData,
+		sun:                   struct {
+			ubo:        ^SunUBO,
+			uboBuffer:  [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
+			renderData: ^SunRenderData,
+		},
 	},
 ) {
 	assert(currCamera != nil)
 	assert(userInfoFileHandle != nil)
 	assert(inventory != nil)
 	assert(renderData.highlightSpere != nil)
-	assert(renderData.pointTrianglePipeline != nil)
-	assert(renderData.pointDotPipeline != nil)
-	assert(renderData.uiPipeline != nil)
 
 	defer user_info_frame_end_store(
 		userInfoFileHandle,
@@ -463,7 +477,7 @@ game_render :: proc(
 	chunks_frame_update(currCamera)
 	// chunks_shift_per_player_movement(&camera)
 	// fmt.println("camera pos", camera.pos)
-	view, proj := camera.Camera_view_proj(currCamera)
+	view, proj := camera.Camera_view_proj(currCamera^)
 	cameraPtr: rawptr
 	vma.map_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc, &cameraPtr)
 	currCameraUBO := vkh.CameraUBO {
@@ -541,10 +555,112 @@ game_render :: proc(
 		}
 
 	}
-
+	sun_ubo_update(renderData.sun.ubo, gs.totalTime)
+	ptr: rawptr
+	vma.map_memory(vkh.allocator, renderData.sun.uboBuffer[vkh.frameIndex].alloc, &ptr)
+	mem.copy(ptr, renderData.sun.ubo, size_of(SunUBO))
+	vma.unmap_memory(vkh.allocator, renderData.sun.uboBuffer[vkh.frameIndex].alloc)
 	// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 	cb := vkh.drawCommandBuffers[vkh.frameIndex]
-	vk_begin_frame(cb)
+	vk_start_frame_commands(cb)
+
+	shadowRes := &renderData.sun.renderData.shadow
+	{
+		vk.CmdSetViewport(cb, 0, 1, &vk.Viewport{0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, 1})
+		vk.CmdSetScissor(cb, 0, 1, &vk.Rect2D{{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}})
+		vk.CmdBindPipeline(cb, .GRAPHICS, shadowRes.pipeline)
+		vk.CmdPushConstants(
+			cb,
+			shadowRes.pipelineLayout,
+			{.VERTEX},
+			0,
+			size_of(matrix[4, 4]f32),
+			&renderData.sun.ubo.lightViewProj,
+		)
+
+		// Dynamic rendering for depth-only shadow map
+		depthAttach := vk.RenderingAttachmentInfo {
+			sType = .RENDERING_ATTACHMENT_INFO,
+			imageView = shadowRes.imageView,
+			imageLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			loadOp = .CLEAR,
+			storeOp = .STORE,
+			clearValue = {depthStencil = {1.0, 0}},
+		}
+		vk.CmdPipelineBarrier2(
+			cb,
+			&vk.DependencyInfo {
+				sType = .DEPENDENCY_INFO,
+				imageMemoryBarrierCount = 1,
+				pImageMemoryBarriers = &vk.ImageMemoryBarrier2 {
+					sType = .IMAGE_MEMORY_BARRIER_2,
+					srcStageMask = {.TOP_OF_PIPE},
+					dstStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+					dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
+					oldLayout = .UNDEFINED,
+					newLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+					image = shadowRes.image,
+					subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
+				},
+			},
+		)
+
+		vk.CmdBeginRendering(
+			cb,
+			&vk.RenderingInfo {
+				sType = .RENDERING_INFO,
+				renderArea = {extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}},
+				layerCount = 1,
+				colorAttachmentCount = 0,
+				pDepthAttachment = &depthAttach,
+			},
+		)
+
+		// Draw each chunk (same buffers as main pass)
+		for chunk in renderedChunks {
+			// Wait for the chunk's vertex buffer to be ready
+			if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
+				waitInfo := vk.SemaphoreWaitInfo {
+					sType          = .SEMAPHORE_WAIT_INFO,
+					semaphoreCount = 1,
+					pSemaphores    = &vkh.copyTimelineSemaphore,
+					pValues        = &chunk.copyTimelineValue[vkh.frameIndex],
+				}
+				vk.WaitSemaphores(vkh.device, &waitInfo, max(u64))
+				chunk.copyTimelineValue[vkh.frameIndex] = 0
+			}
+
+			vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
+			vertexOffset := vk.DeviceSize(0)
+			vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
+			vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
+		}
+		vk.CmdEndRendering(cb)
+
+		// Barrier: make shadow map readable by fragment shader
+		barrier := vk.ImageMemoryBarrier2 {
+			sType = .IMAGE_MEMORY_BARRIER_2,
+			srcStageMask = {.LATE_FRAGMENT_TESTS},
+			dstStageMask = {.FRAGMENT_SHADER},
+			srcAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
+			dstAccessMask = {.SHADER_READ},
+			oldLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			newLayout = .DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+			image = shadowRes.image,
+			subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
+		}
+		vk.CmdPipelineBarrier2(
+			cb,
+			&vk.DependencyInfo {
+				sType = .DEPENDENCY_INFO,
+				imageMemoryBarrierCount = 1,
+				pImageMemoryBarriers = &barrier,
+			},
+		)
+	}
+
+
+	if vk_begin_frame(cb) do return
 	if raycastDidHappen && !leftClickIsHeldThisFrame {
 		highlight_sphere_draw(
 			cb,
@@ -557,42 +673,49 @@ game_render :: proc(
 
 	}
 
-	chunks_draw(cb, renderData.pointTrianglePipeline, renderData.pointDotPipeline, currCamera)
+	chunks_draw(
+		cb,
+		renderData.pointTrianglePipeline,
+		renderData.pointDotPipeline,
+		{
+			ubo = renderData.sun.ubo,
+			buffer = renderData.sun.uboBuffer[vkh.frameIndex],
+			shadow = renderData.sun.renderData.shadow,
+		},
+		currCamera^,
+	)
 
-
+	sun_draw(
+		cb = cb,
+		renderData = renderData.sun.renderData,
+		camPos = currCamera.pos,
+		sunUBO = renderData.sun.ubo,
+		sunUBOBuffer = renderData.sun.uboBuffer[vkh.frameIndex].buffer,
+		cameraBuffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
+	)
 	spellbar_render(inventory)
 	// ui.add_text("TAKING SOULS", font, 32, 20, 20, [4]f32{1, 1, 1, 1})
 
 
-	ui.render(cb, renderData.uiPipeline^)
+	ui.render(cb, renderData.uiPipeline)
 	vk_end_frame(&cb)
 }
 
+@(require_results)
+vk_begin_frame :: proc(cb: vk.CommandBuffer) -> (skip: bool) {
 
-vk_begin_frame :: proc(cb: vk.CommandBuffer) {
-	vkh.chk(vk.WaitForFences(vkh.device, 1, &vkh.fences[vkh.frameIndex], true, max(u64)))
-	vkh.vk_run_deferred_buffer_releases(vkh.frameIndex)
-	vkh.chk(vk.ResetFences(vkh.device, 1, &vkh.fences[vkh.frameIndex]))
-	sync.sema_post(&vkh.framesReady[vkh.frameIndex])
-
-	vkh.vk_chk_swapchain(
-		vk.AcquireNextImageKHR(
-			vkh.device,
-			vkh.swapchain,
-			max(u64),
-			vkh.presentSemaphores[vkh.frameIndex],
-			vk.Fence{},
-			&vkh.imageIndex,
-		),
+	acquireResult := vk.AcquireNextImageKHR(
+		vkh.device,
+		vkh.swapchain,
+		1_000_000_000,
+		vkh.presentSemaphores[vkh.frameIndex],
+		vk.Fence{},
+		&vkh.imageIndex,
 	)
-
-	vkh.chk(vk.ResetCommandBuffer(cb, {}))
-	vkh.chk(
-		vk.BeginCommandBuffer(
-			cb,
-			&{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
-		),
-	)
+	if acquireResult == .ERROR_OUT_OF_DATE_KHR || acquireResult == .TIMEOUT {
+		vkh.updateSwapchain = true
+		return true
+	}
 
 	imageMemoryBarriers := [?]vk.ImageMemoryBarrier2 {
 		{
@@ -629,7 +752,7 @@ vk_begin_frame :: proc(cb: vk.CommandBuffer) {
 		cb,
 		&{
 			sType = .RENDERING_INFO,
-			renderArea = {extent = {width = gs.screenWidth, height = gs.screenHeight}},
+			renderArea = {extent = vkh.swapchainExtent},
 			layerCount = 1,
 			colorAttachmentCount = 1,
 			pColorAttachments = &vk.RenderingAttachmentInfo {
@@ -650,8 +773,21 @@ vk_begin_frame :: proc(cb: vk.CommandBuffer) {
 			},
 		},
 	)
+	return false
 }
+vk_start_frame_commands :: proc(cb: vk.CommandBuffer) {
+	vkh.chk(vk.WaitForFences(vkh.device, 1, &vkh.fences[vkh.frameIndex], true, max(u64)))
+	vkh.vk_run_deferred_buffer_releases(vkh.frameIndex)
+	sync.sema_post(&vkh.framesReady[vkh.frameIndex])
 
+	vkh.chk(vk.ResetCommandBuffer(cb, {}))
+	vkh.chk(
+		vk.BeginCommandBuffer(
+			cb,
+			&{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
+		),
+	)
+}
 vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 	vk.CmdEndRendering(cb^)
 
@@ -674,7 +810,7 @@ vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 		},
 	)
 
-	vk.EndCommandBuffer(cb^)
+	vkh.chk(vk.EndCommandBuffer(cb^))
 
 	vkh.timelineValue += 1
 	vkh.frameTimelineValues[vkh.frameIndex] = vkh.timelineValue
@@ -717,11 +853,9 @@ vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 		},
 	}
 	sync.mutex_lock(&vkh.computeQueueMutex)
-	vk.QueueSubmit2(vkh.graphicsQueue, 1, &submitInfo, vkh.fences[vkh.frameIndex])
+	vkh.chk(vk.ResetFences(vkh.device, 1, &vkh.fences[vkh.frameIndex]))
+	vkh.chk(vk.QueueSubmit2(vkh.graphicsQueue, 1, &submitInfo, vkh.fences[vkh.frameIndex]))
 
-	// Present
-	vkh.frameIndex = (vkh.frameIndex + 1) % vkh.MAX_FRAMES_IN_FLIGHT
-	ui.frame_reset()
 
 	vkh.vk_chk_swapchain(
 		vk.QueuePresentKHR(
@@ -736,6 +870,9 @@ vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 			},
 		),
 	)
+
+	vkh.frameIndex = (vkh.frameIndex + 1) % vkh.MAX_FRAMES_IN_FLIGHT
+	ui.frame_reset()
 	sync.mutex_unlock(&vkh.computeQueueMutex)
 
 }

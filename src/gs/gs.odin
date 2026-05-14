@@ -14,7 +14,7 @@ totalTime: f64 = 0
 
 
 nearPlane: f32 : 0.1
-farPlane: f32 : 160.0
+farPlane: f32 : 1600.0
 NUM_CORES := -1
 GameScreen :: enum {
 	MainMenu,
@@ -34,4 +34,6 @@ LightInterval :: time.Duration(2.3 * f64(time.Second))
 LastLifeTick: time.Tick
 LastWisdomTick: time.Tick
 LastLightTick: time.Tick
+
+WorldStartedAt: time.Time
 GRAVITY :: f32(30.0)

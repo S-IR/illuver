@@ -18,7 +18,90 @@ import "core:simd"
 import "core:sync"
 import "core:thread"
 import vk "vendor:vulkan"
+import "vkh"
 
+
+CHUNK_SIZE :: 16
+CHUNK_STRIDE :: CHUNK_SIZE - 1
+
+MIN_Y :: -128
+MAX_Y :: 127
+CHUNK_HEIGHT :: MAX_Y - MIN_Y
+DEFAULT_SURFACE_LEVEL :: -1
+
+
+VERTS_PER_X_DIR: i32 : CHUNK_SIZE
+VERTS_PER_Y_DIR: i32 : MAX_Y - MIN_Y + 1
+VERTS_PER_Z_DIR: i32 : CHUNK_SIZE
+
+CUBES_PER_X_DIR: i32 : VERTS_PER_X_DIR - 1
+CUBES_PER_Y_DIR: i32 : VERTS_PER_Y_DIR - 1
+CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
+
+CHUNK_HEIGHTMAP_SIZE :: VERTS_PER_X_DIR * VERTS_PER_Z_DIR
+NUM_WORKER_THREADS := 4
+Chunk :: struct {
+	points:            [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
+	heightMap:         [CHUNK_HEIGHTMAP_SIZE]i32,
+	buffers:           struct {
+		vertices: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
+		// indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
+		compute:  struct {
+			pointsInput:     vkh.BufferAlloc, // u16 input (uploaded when dirty)
+			counter:         vkh.BufferAlloc, // atomic counters (3x u32)
+			uniform:         vkh.BufferAlloc,
+			stagingVertices: vkh.BufferAlloc,
+		},
+	},
+	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
+	pos:               int2,
+	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
+	mutex:             sync.RW_Mutex,
+	totalPoints:       u32,
+	arena:             virtual.Arena,
+	alloc:             mem.Allocator,
+	dirty:             bool,
+}
+
+
+// chunk_point_get :: proc(c: ^Chunk, x, y, z: i32) -> PointType {
+// 	return c.points[x * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR + y * CUBES_PER_Z_DIR + z]
+// }
+
+CHUNKS_PER_DIRECTION := 5
+// #assert(CHUNKS_PER_DIRECTION < int(max(i32)))
+ENERGY_TICKING_DIRECTION_LEN := CHUNKS_PER_DIRECTION
+
+VERT_STRIDE_X :: VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
+VERT_STRIDE_Y :: VERTS_PER_Z_DIR
+index_into_point_arrays_scalars :: #force_inline proc "contextless" (x, y, z: i32) -> i32 {
+	return x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
+}
+index_into_point_arrays_vector :: #force_inline proc "contextless" (v: [3]i32) -> i32 {
+	return v.x * VERT_STRIDE_X + v.y * VERT_STRIDE_Y + v.z
+}
+index_into_point_arrays :: proc {
+	index_into_point_arrays_scalars,
+	index_into_point_arrays_vector,
+}
+
+index_into_height_map_scalars :: #force_inline proc "contextless" (x, z: i32) -> i32 {
+	return x * VERTS_PER_Z_DIR + z
+}
+index_into_height_map_vector :: #force_inline proc "contextless" (v: [2]i32) -> i32 {
+	return v.x * VERTS_PER_Z_DIR + v.y
+}
+index_into_height_map :: proc {
+	index_into_height_map_scalars,
+	index_into_height_map_vector,
+}
+MAX_POINTS :: VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
+MAX_POINTS_INT :: int(MAX_POINTS)
+
+MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
+MAX_COLORS :: MAX_INDICES
+INDEX_TYPE_USED_IN_CHUNKS :: u32
+CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_INDICES * (size_of([4]f32) + size_of([4]f32))
 chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool, prev: u16) {
 
 	for chunk in renderedChunks {
@@ -164,7 +247,7 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 }
 
 
-is_chunk_in_camera_frustrum :: proc(pos: [2]i32, c: ^camera.Camera) -> bool {
+is_chunk_in_camera_frustrum :: proc(pos: [2]i32, c: camera.Camera) -> bool {
 	min := [3]f32{f32(pos[0]), f32(MIN_Y), f32(pos[1])}
 	max := [3]f32{f32((pos[0] + CHUNK_SIZE)), f32(MAX_Y), f32((pos[1] + CHUNK_SIZE))}
 
@@ -234,9 +317,7 @@ get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) 
 		worldCoordXYZ.z - chunk.pos.y,
 	}
 
-	assert(localXYZ.x >= 0 && localXYZ.x < VERTS_PER_X_DIR)
-	assert(localXYZ.y >= 0 && localXYZ.y < VERTS_PER_Y_DIR)
-	assert(localXYZ.z >= 0 && localXYZ.z < VERTS_PER_Z_DIR)
+	assert_point_array_index_valid(localXYZ)
 
 	return chunk.points[index_into_point_arrays(localXYZ)]
 }
@@ -245,6 +326,63 @@ chunk_contains_point :: proc(chunkXZ: [2]i32, pos: [3]f32) -> bool {
 	diff := posXZ - chunkXZ
 
 	return diff[0] >= 0 && diff[1] >= 0 && diff[0] <= CHUNK_STRIDE && diff[1] <= CHUNK_STRIDE
+}
+assert_height_map_index_valid_scalars :: #force_inline proc(x, z: i32) {
+	when ODIN_DEBUG {
+		assert(x >= 0 && x < VERTS_PER_X_DIR)
+		assert(z >= 0 && z < VERTS_PER_Z_DIR)
+	}
+}
+assert_height_map_index_valid_vector :: #force_inline proc(v: [2]i32) {
+	when ODIN_DEBUG {
+		assert(v.x >= 0 && v.x < VERTS_PER_X_DIR)
+		assert(v.y >= 0 && v.y < VERTS_PER_Z_DIR)
+	}
+}
+assert_height_map_index_valid :: proc {
+	assert_height_map_index_valid_scalars,
+	assert_height_map_index_valid_vector,
+}
+
+assert_point_array_index_valid_scalars :: #force_inline proc(x, y, z: i32) {
+	when ODIN_DEBUG {
+		assert(x >= 0 && x < VERTS_PER_X_DIR)
+		assert(y >= 0 && y < VERTS_PER_Y_DIR)
+		assert(z >= 0 && z < VERTS_PER_Z_DIR)
+	}
+}
+assert_point_array_index_valid_vector :: #force_inline proc(v: [3]i32) {
+	when ODIN_DEBUG {
+		assert(v.x >= 0 && v.x < VERTS_PER_X_DIR)
+		assert(v.y >= 0 && v.y < VERTS_PER_Y_DIR)
+		assert(v.z >= 0 && v.z < VERTS_PER_Z_DIR)
+	}
+}
+assert_point_array_index_valid :: proc {
+	assert_point_array_index_valid_scalars,
+	assert_point_array_index_valid_vector,
+}
+point_place_update_height :: #force_inline proc(
+	points: ^[MAX_POINTS]u16,
+	heightMap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
+	index: [3]i32,
+	val: u16,
+) {
+	assert_point_array_index_valid(index)
+	points[index_into_point_arrays(index)] = val
+	heightMap[index_into_height_map(index.xz)] = math.max(
+		heightMap[index_into_height_map(index.xz)],
+		index.y,
+	)
+
+}
+chunk_point_oob :: proc(index: [3]i32) -> bool {
+	if index.x < 0 || index.x >= VERTS_PER_X_DIR do return true
+
+	if index.z < 0 || index.z >= VERTS_PER_Z_DIR do return true
+	if index.y < 0 || index.y >= VERTS_PER_Y_DIR do return true
+
+	return false
 }
 MAX_WALKABLE_SLOPE :: f32(0.6)
 

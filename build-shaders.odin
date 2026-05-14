@@ -57,8 +57,13 @@ main :: proc() {
 			if isCompute {
 				compile_shader(file.fullpath, actualOutputPath, "spv", .compute)
 			} else {
-				compile_shader(file.fullpath, actualOutputPath, "spv", .vertex)
-				compile_shader(file.fullpath, actualOutputPath, "spv", .fragment)
+				if !strings.contains(relPath, ".fragment") {
+					compile_shader(file.fullpath, actualOutputPath, "spv", .vertex)
+
+				}
+				if !strings.contains(relPath, ".vertex") {
+					compile_shader(file.fullpath, actualOutputPath, "spv", .fragment)
+				}
 			}
 		}
 	}

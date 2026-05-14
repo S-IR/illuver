@@ -74,7 +74,7 @@ bmfont_json_load :: proc(
 	if unmarshallErr != nil do log.fatalf("[UI] error unmarshalling BMFONT json: %s", fmt.enum_value_to_string(unmarshallErr))
 	assert(len(font.pages) > 0)
 	pngPath := font.pages[0]
-	dir := filepath.dir(path, context.temp_allocator)
+	dir := filepath.dir(path)
 	pngFinalPath, err := filepath.join({dir, pngPath}, context.temp_allocator)
 	ensure(err == nil)
 	pngFinalPathCString := strings.clone_to_cstring(pngFinalPath, context.temp_allocator)
@@ -172,8 +172,13 @@ add_text :: proc(str: string, font: BMFont, fontSize: f32, posX, posY: f32, colo
 		uvBottom := f32(glyph.y) / f32(font.common.scaleH)
 		uvRight := f32(glyph.x + glyph.width) / f32(font.common.scaleW)
 
-		assert(left < right)
-		assert(top < bottom)
+		// Some BMFont glyphs (e.g. space, zero-metric punctuation) have width or
+		// height of 0; skip them rather than failing the assertion.
+		if left >= right || top >= bottom {
+			penX += f32(glyph.xadvance) * scale
+			prevId = glyph.id
+			continue
+		}
 		small_array.append(
 			&batch.vertices,
 			TextVertex{{left, bottom}, {uvLeft, uvTop}},

@@ -9,8 +9,8 @@ import vk "vendor:vulkan"
 import "vkh"
 HighlightSphere :: struct {
 	pipeline:     vkh.PipelineData,
-	vertexBuffer: vkh.VkBufferPoolElem,
-	indexBuffer:  vkh.VkBufferPoolElem,
+	vertexBuffer: vkh.BufferAlloc,
+	indexBuffer:  vkh.BufferAlloc,
 	indexCount:   u32,
 }
 

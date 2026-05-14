@@ -139,7 +139,7 @@ Camera_process_mouse_movement :: proc(
 	c.pitch = math.clamp(c.pitch, -89.0, 89.0)
 	Camera_rotate(c)
 }
-Camera_view_proj :: proc(c: ^Camera) -> (view, proj: matrix[4, 4]f32) {
+Camera_view_proj :: proc(c: Camera) -> (view, proj: matrix[4, 4]f32) {
 	// fmt.println("c.front", c.front)
 	// fmt.println("c.up", c.up)
 	// fmt.println("c.right", c.right)

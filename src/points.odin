@@ -138,11 +138,23 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 	}
 
 	descLayoutBindings := [?]vk.DescriptorSetLayoutBinding {
-		{
-			binding = 0,
-			descriptorType = .UNIFORM_BUFFER,
+		{ 	// camera
+			binding         = 0,
+			descriptorType  = .UNIFORM_BUFFER,
 			descriptorCount = 1,
-			stageFlags = {.VERTEX},
+			stageFlags      = {.VERTEX, .FRAGMENT},
+		},
+		{ 	// sun
+			binding         = 1,
+			descriptorType  = .UNIFORM_BUFFER,
+			descriptorCount = 1,
+			stageFlags      = {.FRAGMENT},
+		},
+		{
+			binding = 2,
+			descriptorType = .COMBINED_IMAGE_SAMPLER,
+			descriptorCount = 1,
+			stageFlags = {.FRAGMENT},
 		},
 	}
 
@@ -186,11 +198,12 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 	defer vk.DestroyShaderModule(vkh.device, fragModule, nil)
 
 	viBindings := [?]vk.VertexInputBindingDescription {
-		{binding = 0, stride = 16, inputRate = .VERTEX},
+		{binding = 0, stride = 32, inputRate = .VERTEX},
 	}
 	vaDescriptors := [?]vk.VertexInputAttributeDescription {
-		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = 0},
-		{location = 1, binding = 0, format = .R32_UINT, offset = 12},
+		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = 0}, // position
+		{location = 1, binding = 0, format = .R32G32B32_SFLOAT, offset = 12}, // normal
+		{location = 2, binding = 0, format = .R32_UINT, offset = 24}, // pointType
 	}
 
 	dynamicStates := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}

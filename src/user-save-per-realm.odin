@@ -26,7 +26,7 @@ user_info_realm_init :: proc(
 	err: os.Error
 
 	if !os.exists(path) {
-		err = os.mkdir_all(filepath.dir(path, context.temp_allocator))
+		err = os.mkdir_all(filepath.dir(path))
 		if err != .Exist do ensure(err == nil)
 		userInfoFileHandle, err = os.create(path)
 		ensure(err == nil)

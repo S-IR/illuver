@@ -28,59 +28,6 @@ int3 :: [3]i32
 int2 :: [2]i32
 
 
-CHUNK_SIZE :: 16
-CHUNK_STRIDE :: CHUNK_SIZE - 1
-
-MIN_Y :: -128
-MAX_Y :: 127
-CHUNK_HEIGHT :: MAX_Y - MIN_Y
-DEFAULT_SURFACE_LEVEL :: -1
-
-WIDTH_OF_CELL :: f32(1)
-
-
-VERTS_PER_X_DIR: i32 : auto_cast (CHUNK_SIZE / WIDTH_OF_CELL)
-VERTS_PER_Y_DIR: i32 : auto_cast ((MAX_Y - MIN_Y + 1) / WIDTH_OF_CELL)
-VERTS_PER_Z_DIR: i32 : auto_cast (CHUNK_SIZE / WIDTH_OF_CELL)
-
-CUBES_PER_X_DIR: i32 : VERTS_PER_X_DIR - 1
-CUBES_PER_Y_DIR: i32 : VERTS_PER_Y_DIR - 1
-CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
-
-CHUNK_HEIGHTMAP_SIZE :: VERTS_PER_X_DIR * VERTS_PER_Z_DIR
-NUM_WORKER_THREADS := 4
-Chunk :: struct {
-	points:            [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
-	heightMap:         [CHUNK_HEIGHTMAP_SIZE]i32,
-	buffers:           struct {
-		vertices: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
-		// indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
-		compute:  struct {
-			pointsInput:     vkh.VkBufferPoolElem, // u16 input (uploaded when dirty)
-			counter:         vkh.VkBufferPoolElem, // atomic counters (3x u32)
-			uniform:         vkh.VkBufferPoolElem,
-			stagingVertices: vkh.VkBufferPoolElem,
-		},
-	},
-	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
-	pos:               int2,
-	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
-	mutex:             sync.RW_Mutex,
-	totalPoints:       u32,
-	arena:             virtual.Arena,
-	alloc:             mem.Allocator,
-	dirty:             bool,
-}
-
-
-// chunk_point_get :: proc(c: ^Chunk, x, y, z: i32) -> PointType {
-// 	return c.points[x * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR + y * CUBES_PER_Z_DIR + z]
-// }
-
-CHUNKS_PER_DIRECTION := 7
-// #assert(CHUNKS_PER_DIRECTION < int(max(i32)))
-ENERGY_TICKING_DIRECTION_LEN := CHUNKS_PER_DIRECTION
-
 chunksPool: [dynamic]Chunk = nil
 renderedChunks: [dynamic]^Chunk = nil
 rc_idx :: #force_inline proc "contextless" (x, z: int) -> int {
@@ -92,6 +39,7 @@ rc :: #force_inline proc "contextless" (x, z: int) -> ^Chunk {
 rc_set :: #force_inline proc "contextless" (x, z: int, c: ^Chunk) {
 	renderedChunks[x * CHUNKS_PER_DIRECTION + z] = c
 }
+
 // ChunkPrevEnergyCache: [dynamic]u16
 // CHUNK_MIDDLE_X_INDEX :: (CHUNKS_PER_DIRECTION / 2)
 // CHUNK_MIDDLE_Z_INDEX :: (CHUNKS_PER_DIRECTION / 2)
@@ -229,25 +177,7 @@ chunks_init :: proc(c: ^camera.Camera) {
 // 		}
 // 	}
 // }
-VERT_STRIDE_X :: VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
-VERT_STRIDE_Y :: VERTS_PER_Z_DIR
-index_into_point_arrays_scalars :: #force_inline proc "contextless" (x, y, z: i32) -> i32 {
-	return x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
-}
-index_into_point_arrays_vector :: #force_inline proc "contextless" (v: [3]i32) -> i32 {
-	return v.x * VERT_STRIDE_X + v.y * VERT_STRIDE_Y + v.z
-}
-index_into_point_arrays :: proc {
-	index_into_point_arrays_scalars,
-	index_into_point_arrays_vector,
-}
-MAX_POINTS :: VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
-MAX_POINTS_INT :: int(MAX_POINTS)
 
-MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
-MAX_COLORS :: MAX_INDICES
-INDEX_TYPE_USED_IN_CHUNKS :: u32
-CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_INDICES * size_of([4]f32)
 
 chunk_init :: proc(chunk: ^Chunk, pos: [2]i32, state: ^ChunkWorkerState) {
 
@@ -290,9 +220,19 @@ chunk_init :: proc(chunk: ^Chunk, pos: [2]i32, state: ^ChunkWorkerState) {
 	} else {
 		free_all(chunk.alloc)
 	}
+	// Preserve fields that must survive re-init: GPU buffers (still owned by chunk),
+	// the arena (already free_all'd above), the allocator handle, and the mutex
+	// which the worker thread currently holds (zeroing it would invalidate the
+	// lock held by the caller in chunk-worker_thread).
 	chunkBuffers := chunk.buffers
+	savedArena := chunk.arena
+	savedAlloc := chunk.alloc
+	savedMutex := chunk.mutex
 	chunk^ = {}
 	chunk.buffers = chunkBuffers
+	chunk.arena = savedArena
+	chunk.alloc = savedAlloc
+	chunk.mutex = savedMutex
 	chunk.pos = pos
 
 
@@ -339,6 +279,7 @@ chunk_init :: proc(chunk: ^Chunk, pos: [2]i32, state: ^ChunkWorkerState) {
 					worldXYZ := [3]i32{worldX, yCoord, worldZ}
 					procedural_point_type(
 						&chunk.points,
+						&chunk.heightMap,
 						biomeWeights,
 						worldXYZ,
 						{x, y, z},
@@ -500,9 +441,14 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 
 chunks_draw :: proc(
 	cb: vk.CommandBuffer,
-	triPipeline: ^vkh.PipelineData,
-	pointPipeline: ^vkh.PipelineData,
-	currCamera: ^camera.Camera,
+	triPipeline: vkh.PipelineData,
+	pointPipeline: vkh.PipelineData,
+	sun: struct {
+		ubo:    ^SunUBO,
+		buffer: vkh.BufferAlloc,
+		shadow: SunShadowResources,
+	},
+	currCamera: camera.Camera,
 ) {
 	vk.CmdSetViewport(
 		cb,
@@ -542,21 +488,43 @@ chunks_draw :: proc(
 		vertexOffset := vk.DeviceSize(0)
 		vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
 
-		cameraInfo := vk.DescriptorBufferInfo {
-			buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
-			offset = 0,
-			range  = vkh.CameraUBOSize,
-		}
 
 		writes := [?]vk.WriteDescriptorSet {
+			{ 	// binding 0 — camera
+				sType           = .WRITE_DESCRIPTOR_SET,
+				dstBinding      = 0,
+				descriptorCount = 1,
+				descriptorType  = .UNIFORM_BUFFER,
+				pBufferInfo     = &{
+					buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
+					offset = 0,
+					range = vkh.CameraUBOSize,
+				},
+			},
+			{ 	// binding 1 — sun (new)
+				sType           = .WRITE_DESCRIPTOR_SET,
+				dstBinding      = 1,
+				descriptorCount = 1,
+				descriptorType  = .UNIFORM_BUFFER,
+				pBufferInfo     = &{
+					buffer = sun.buffer.buffer,
+					offset = 0,
+					range = vk.DeviceSize(size_of(SunUBO)),
+				},
+			},
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
-				dstBinding = 0,
+				dstBinding = 2,
 				descriptorCount = 1,
-				descriptorType = .UNIFORM_BUFFER,
-				pBufferInfo = &cameraInfo,
+				descriptorType = .COMBINED_IMAGE_SAMPLER,
+				pImageInfo = &{
+					sampler = sun.shadow.sampler,
+					imageView = sun.shadow.imageView,
+					imageLayout = .DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+				},
 			},
 		}
+
 
 		vk.CmdBindPipeline(cb, .GRAPHICS, triPipeline.pipeline)
 		vk.CmdPushDescriptorSetKHR(
