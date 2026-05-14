@@ -252,7 +252,7 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 		pRasterizationState = &vk.PipelineRasterizationStateCreateInfo {
 			sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 			lineWidth = 1.0,
-			cullMode = {},
+			cullMode = {.BACK},
 			frontFace = .COUNTER_CLOCKWISE,
 		},
 		pMultisampleState   = &vk.PipelineMultisampleStateCreateInfo {

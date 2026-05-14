@@ -125,7 +125,7 @@ void main(uint3 id: SV_DispatchThreadID) {
 
     float3 normal = normalize(cross(pos1 - pos0, pos2 - pos0));
 
-    uint offset = vIdx * 32; // stride = 32
+    uint offset = vIdx * 32;
 
     // Vertex 0
     vertsOut.Store3(offset + 0, asuint(pos0));
@@ -142,5 +142,24 @@ void main(uint3 id: SV_DispatchThreadID) {
     vertsOut.Store3(offset + 64, asuint(pos2));
     vertsOut.Store3(offset + 76, asuint(normal));
     vertsOut.Store(offset + 88, uint(p2));
+
+    counter.InterlockedAdd(0, 3, vIdx);
+    normal = normalize(cross(pos2 - pos0, pos1 - pos0));
+    offset = vIdx * 32;
+
+    // Vertex 3
+    vertsOut.Store3(offset + 0, asuint(pos0));
+    vertsOut.Store3(offset + 12, asuint(normal));
+    vertsOut.Store(offset + 24, uint(p0));
+
+    // Vertex 4
+    vertsOut.Store3(offset + 32, asuint(pos2));
+    vertsOut.Store3(offset + 44, asuint(normal));
+    vertsOut.Store(offset + 56, uint(p2));
+
+    // Vertex 5
+    vertsOut.Store3(offset + 64, asuint(pos1));
+    vertsOut.Store3(offset + 76, asuint(normal));
+    vertsOut.Store(offset + 88, uint(p1));
   }
 }

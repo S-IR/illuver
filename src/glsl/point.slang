@@ -62,11 +62,40 @@ VertexOutput vertexMain(VertexInput input) {
   return output;
 }
 
+static float3 lightPos = { 5, 5, 5 };
+static float lightAmbientStrength = 0.05;
+static float specularStrength = 32.0;
+static float3 lightColor = float3(1.0, 1.0, 1.0);
+
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target0 {
   if (pc.isPointPass != 0) {
     return float4(0.0, 0.0, 0.0, 1.0);
   }
+  float3 surfaceColor = input.color.xyz;
+  float3 ambient = lightAmbientStrength * surfaceColor;
 
-  return input.color;
+  // diffuse
+  float3 lightVec = lightPos - input.worldPos;
+  float distance = length(lightVec);
+  float3 lightDir = lightVec / distance;
+
+  float attenuation =
+      1.0 / (1.0 + 0.09 * distance + 0.032 * distance * distance);
+
+  float3 normal = normalize(input.normal);
+  float diff = max(dot(lightDir, normal), 0.0);
+  float3 diffuse = diff * surfaceColor * lightColor * attenuation;
+
+  float3 cameraPos = -mul(view[3].xyz, (float3x3)view);
+  // specular
+  float3 viewDir = normalize(cameraPos - input.worldPos);
+  float spec = 0.0;
+  if (diff > 0.0) {
+    float3 halfwayDir = normalize(lightDir + viewDir);
+    spec = pow(max(dot(normal, halfwayDir), 0.0), specularStrength);
+  }
+  float3 specular = spec * 0.3 * lightColor * attenuation;
+
+  return float4(ambient + diffuse + specular, 1.0);
 }
