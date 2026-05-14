@@ -193,13 +193,6 @@ main :: proc() {
 	highlightSphere := highlight_sphere_init()
 	when ODIN_DEBUG do defer highlight_sphere_destroy(&highlightSphere)
 
-	sunBuffer := sun_ubo_buffer_init()
-	sunUBO: SunUBO
-	when ODIN_DEBUG do defer sun_ubo_buffer_destroy(sunBuffer)
-
-	sunRenderData := sun_render_data_init()
-	when ODIN_DEBUG do defer sun_render_data_destroy(&sunRenderData)
-
 
 	e: sdl.Event
 
@@ -437,7 +430,6 @@ main :: proc() {
 					pointTrianglePipeline = pointTrianglePipeline,
 					pointDotPipeline = pointDotPipeline,
 					uiPipeline = uiPipeline,
-					sun = {uboBuffer = sunBuffer, ubo = &sunUBO, renderData = &sunRenderData},
 				},
 			)
 
@@ -456,11 +448,6 @@ game_render :: proc(
 		pointTrianglePipeline: vkh.PipelineData,
 		pointDotPipeline:      vkh.PipelineData,
 		uiPipeline:            vkh.PipelineData,
-		sun:                   struct {
-			ubo:        ^SunUBO,
-			uboBuffer:  [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
-			renderData: ^SunRenderData,
-		},
 	},
 ) {
 	assert(currCamera != nil)
@@ -555,110 +542,9 @@ game_render :: proc(
 		}
 
 	}
-	sun_ubo_update(renderData.sun.ubo, gs.totalTime)
-	ptr: rawptr
-	vma.map_memory(vkh.allocator, renderData.sun.uboBuffer[vkh.frameIndex].alloc, &ptr)
-	mem.copy(ptr, renderData.sun.ubo, size_of(SunUBO))
-	vma.unmap_memory(vkh.allocator, renderData.sun.uboBuffer[vkh.frameIndex].alloc)
 	// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 	cb := vkh.drawCommandBuffers[vkh.frameIndex]
 	vk_start_frame_commands(cb)
-
-	shadowRes := &renderData.sun.renderData.shadow
-	{
-		vk.CmdSetViewport(cb, 0, 1, &vk.Viewport{0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, 1})
-		vk.CmdSetScissor(cb, 0, 1, &vk.Rect2D{{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}})
-		vk.CmdBindPipeline(cb, .GRAPHICS, shadowRes.pipeline)
-		vk.CmdPushConstants(
-			cb,
-			shadowRes.pipelineLayout,
-			{.VERTEX},
-			0,
-			size_of(matrix[4, 4]f32),
-			&renderData.sun.ubo.lightViewProj,
-		)
-
-		// Dynamic rendering for depth-only shadow map
-		depthAttach := vk.RenderingAttachmentInfo {
-			sType = .RENDERING_ATTACHMENT_INFO,
-			imageView = shadowRes.imageView,
-			imageLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			loadOp = .CLEAR,
-			storeOp = .STORE,
-			clearValue = {depthStencil = {1.0, 0}},
-		}
-		vk.CmdPipelineBarrier2(
-			cb,
-			&vk.DependencyInfo {
-				sType = .DEPENDENCY_INFO,
-				imageMemoryBarrierCount = 1,
-				pImageMemoryBarriers = &vk.ImageMemoryBarrier2 {
-					sType = .IMAGE_MEMORY_BARRIER_2,
-					srcStageMask = {.TOP_OF_PIPE},
-					dstStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
-					dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
-					oldLayout = .UNDEFINED,
-					newLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-					image = shadowRes.image,
-					subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
-				},
-			},
-		)
-
-		vk.CmdBeginRendering(
-			cb,
-			&vk.RenderingInfo {
-				sType = .RENDERING_INFO,
-				renderArea = {extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}},
-				layerCount = 1,
-				colorAttachmentCount = 0,
-				pDepthAttachment = &depthAttach,
-			},
-		)
-
-		// Draw each chunk (same buffers as main pass)
-		for chunk in renderedChunks {
-			// Wait for the chunk's vertex buffer to be ready
-			if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
-				waitInfo := vk.SemaphoreWaitInfo {
-					sType          = .SEMAPHORE_WAIT_INFO,
-					semaphoreCount = 1,
-					pSemaphores    = &vkh.copyTimelineSemaphore,
-					pValues        = &chunk.copyTimelineValue[vkh.frameIndex],
-				}
-				vk.WaitSemaphores(vkh.device, &waitInfo, max(u64))
-				chunk.copyTimelineValue[vkh.frameIndex] = 0
-			}
-
-			vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
-			vertexOffset := vk.DeviceSize(0)
-			vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
-			vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
-		}
-		vk.CmdEndRendering(cb)
-
-		// Barrier: make shadow map readable by fragment shader
-		barrier := vk.ImageMemoryBarrier2 {
-			sType = .IMAGE_MEMORY_BARRIER_2,
-			srcStageMask = {.LATE_FRAGMENT_TESTS},
-			dstStageMask = {.FRAGMENT_SHADER},
-			srcAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
-			dstAccessMask = {.SHADER_READ},
-			oldLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			newLayout = .DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-			image = shadowRes.image,
-			subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
-		}
-		vk.CmdPipelineBarrier2(
-			cb,
-			&vk.DependencyInfo {
-				sType = .DEPENDENCY_INFO,
-				imageMemoryBarrierCount = 1,
-				pImageMemoryBarriers = &barrier,
-			},
-		)
-	}
-
 
 	if vk_begin_frame(cb) do return
 	if raycastDidHappen && !leftClickIsHeldThisFrame {
@@ -673,26 +559,9 @@ game_render :: proc(
 
 	}
 
-	chunks_draw(
-		cb,
-		renderData.pointTrianglePipeline,
-		renderData.pointDotPipeline,
-		{
-			ubo = renderData.sun.ubo,
-			buffer = renderData.sun.uboBuffer[vkh.frameIndex],
-			shadow = renderData.sun.renderData.shadow,
-		},
-		currCamera^,
-	)
+	chunks_draw(cb, renderData.pointTrianglePipeline, renderData.pointDotPipeline, currCamera^)
 
-	sun_draw(
-		cb = cb,
-		renderData = renderData.sun.renderData,
-		camPos = currCamera.pos,
-		sunUBO = renderData.sun.ubo,
-		sunUBOBuffer = renderData.sun.uboBuffer[vkh.frameIndex].buffer,
-		cameraBuffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
-	)
+
 	spellbar_render(inventory)
 	// ui.add_text("TAKING SOULS", font, 32, 20, 20, [4]f32{1, 1, 1, 1})
 

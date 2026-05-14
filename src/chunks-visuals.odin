@@ -443,11 +443,6 @@ chunks_draw :: proc(
 	cb: vk.CommandBuffer,
 	triPipeline: vkh.PipelineData,
 	pointPipeline: vkh.PipelineData,
-	sun: struct {
-		ubo:    ^SunUBO,
-		buffer: vkh.BufferAlloc,
-		shadow: SunShadowResources,
-	},
 	currCamera: camera.Camera,
 ) {
 	vk.CmdSetViewport(
@@ -499,28 +494,6 @@ chunks_draw :: proc(
 					buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
 					offset = 0,
 					range = vkh.CameraUBOSize,
-				},
-			},
-			{ 	// binding 1 — sun (new)
-				sType           = .WRITE_DESCRIPTOR_SET,
-				dstBinding      = 1,
-				descriptorCount = 1,
-				descriptorType  = .UNIFORM_BUFFER,
-				pBufferInfo     = &{
-					buffer = sun.buffer.buffer,
-					offset = 0,
-					range = vk.DeviceSize(size_of(SunUBO)),
-				},
-			},
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstBinding = 2,
-				descriptorCount = 1,
-				descriptorType = .COMBINED_IMAGE_SAMPLER,
-				pImageInfo = &{
-					sampler = sun.shadow.sampler,
-					imageView = sun.shadow.imageView,
-					imageLayout = .DEPTH_STENCIL_READ_ONLY_OPTIMAL,
 				},
 			},
 		}

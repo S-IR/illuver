@@ -21,7 +21,7 @@ float ShadowFactor(float3 worldPos) {
   float4 lightClip = mul(lightViewProj, float4(worldPos, 1.0));
   float3 proj = lightClip.xyz / lightClip.w;
   float2 uv = proj.xy * 0.5 + 0.5;
-  float depth = proj.z * 0.5 + 0.5;
+  float depth = proj.z; // not *0.5+0.5
 
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || depth > 1.0)
     return 1.0;
@@ -68,13 +68,5 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
     return float4(0.0, 0.0, 0.0, 1.0);
   }
 
-  float3 N = normalize(input.normal);
-  float3 L = -normalize(sunDir.xyz);
-
-  float NdotL = max(dot(N, L), 0.0);
-  float shadow = ShadowFactor(input.worldPos);
-  float3 diffuse = sunColor.rgb * sunColor.a * NdotL * shadow;
-  float3 ambient = ambientColor.rgb;
-  float3 lit = input.color.rgb * (ambient + diffuse);
-  return float4(lit, input.color.a);
+  return input.color;
 }
