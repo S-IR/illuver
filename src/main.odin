@@ -193,6 +193,10 @@ main :: proc() {
 	highlightSphere := highlight_sphere_init()
 	when ODIN_DEBUG do defer highlight_sphere_destroy(&highlightSphere)
 
+	sunRenderData := sun_init()
+	when ODIN_DEBUG {
+		defer sun_render_data_destroy(&sunRenderData)
+	}
 
 	e: sdl.Event
 
@@ -430,6 +434,7 @@ main :: proc() {
 					pointTrianglePipeline = pointTrianglePipeline,
 					pointDotPipeline = pointDotPipeline,
 					uiPipeline = uiPipeline,
+					sun = &sunRenderData,
 				},
 			)
 
@@ -443,11 +448,12 @@ game_render :: proc(
 	inventory: ^Inventory,
 	mouseX, mouseY: f32,
 	leftClickIsHeldThisFrame, pressedRightClickThisFrame: bool,
-	renderData: struct {
+	renderData: struct #all_or_none {
 		highlightSpere:        ^HighlightSphere,
 		pointTrianglePipeline: vkh.PipelineData,
 		pointDotPipeline:      vkh.PipelineData,
 		uiPipeline:            vkh.PipelineData,
+		sun:                   ^SunRenderData,
 	},
 ) {
 	assert(currCamera != nil)
@@ -475,6 +481,11 @@ game_render :: proc(
 	mem.copy(cameraPtr, &currCameraUBO, size_of(currCameraUBO))
 	vma.unmap_memory(vkh.allocator, vkh.cameraBuffers[vkh.frameIndex].alloc)
 
+	sun_ubo_update(&renderData.sun.ubo, gs.totalTime, currCamera.pos)
+	sunPtr: rawptr
+	vma.map_memory(vkh.allocator, renderData.sun.uboBuffers[vkh.frameIndex].alloc, &sunPtr)
+	mem.copy(sunPtr, &renderData.sun.ubo, size_of(SunUBO))
+	vma.unmap_memory(vkh.allocator, renderData.sun.uboBuffers[vkh.frameIndex].alloc)
 
 	rayDir := compute_mouse_ray(mouseX, mouseY, gs.screenWidth, gs.screenHeight, view, proj)
 
@@ -559,12 +570,19 @@ game_render :: proc(
 
 	}
 
-	chunks_draw(cb, renderData.pointTrianglePipeline, renderData.pointDotPipeline, currCamera^)
+	chunks_draw(
+		cb = cb,
+		triPipeline = renderData.pointTrianglePipeline,
+		currCamera = currCamera^,
+		pointPipeline = renderData.pointDotPipeline,
+		sunUBOBuffer = renderData.sun.uboBuffers[vkh.frameIndex].buffer,
+	)
 
 
 	spellbar_render(inventory)
 	// ui.add_text("TAKING SOULS", font, 32, 20, 20, [4]f32{1, 1, 1, 1})
 
+	sun_draw(cb, renderData.sun)
 
 	ui.render(cb, renderData.uiPipeline)
 	vk_end_frame(&cb)

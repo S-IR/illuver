@@ -150,12 +150,6 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 			descriptorCount = 1,
 			stageFlags      = {.FRAGMENT},
 		},
-		{
-			binding = 2,
-			descriptorType = .COMBINED_IMAGE_SAMPLER,
-			descriptorCount = 1,
-			stageFlags = {.FRAGMENT},
-		},
 	}
 
 	vkh.chk(

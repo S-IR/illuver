@@ -444,7 +444,9 @@ chunks_draw :: proc(
 	triPipeline: vkh.PipelineData,
 	pointPipeline: vkh.PipelineData,
 	currCamera: camera.Camera,
+	sunUBOBuffer: vk.Buffer,
 ) {
+
 	vk.CmdSetViewport(
 		cb,
 		0,
@@ -485,15 +487,26 @@ chunks_draw :: proc(
 
 
 		writes := [?]vk.WriteDescriptorSet {
-			{ 	// binding 0 — camera
-				sType           = .WRITE_DESCRIPTOR_SET,
-				dstBinding      = 0,
+			{
+				sType = .WRITE_DESCRIPTOR_SET,
+				dstBinding = 0,
 				descriptorCount = 1,
-				descriptorType  = .UNIFORM_BUFFER,
-				pBufferInfo     = &{
+				descriptorType = .UNIFORM_BUFFER,
+				pBufferInfo = &{
 					buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
 					offset = 0,
 					range = vkh.CameraUBOSize,
+				},
+			},
+			{
+				sType = .WRITE_DESCRIPTOR_SET,
+				dstBinding = 1,
+				descriptorCount = 1,
+				descriptorType = .UNIFORM_BUFFER,
+				pBufferInfo = &{
+					buffer = sunUBOBuffer,
+					offset = 0,
+					range = vk.DeviceSize(size_of(SunUBO)),
 				},
 			},
 		}
