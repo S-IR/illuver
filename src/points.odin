@@ -129,6 +129,12 @@ PointType :: enum u16 {
 
 BottomFacedIndices := [?]u16{0, 1, 2, 0, 2, 3}
 
+PointVertexInput :: struct {
+	pos, normal: [3]f32,
+	pointVal:    u32,
+	_pad:        u32,
+}
+#assert(size_of(PointVertexInput) == 32)
 
 point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: vkh.PipelineData) {
 	pushRange := vk.PushConstantRange {
@@ -138,17 +144,23 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 	}
 
 	descLayoutBindings := [?]vk.DescriptorSetLayoutBinding {
-		{ 	// camera
-			binding         = 0,
-			descriptorType  = .UNIFORM_BUFFER,
+		{
+			binding = 0,
+			descriptorType = .UNIFORM_BUFFER,
 			descriptorCount = 1,
-			stageFlags      = {.VERTEX, .FRAGMENT},
+			stageFlags = {.VERTEX, .FRAGMENT},
 		},
-		{ 	// sun
-			binding         = 1,
-			descriptorType  = .UNIFORM_BUFFER,
+		{
+			binding = 1,
+			descriptorType = .UNIFORM_BUFFER,
 			descriptorCount = 1,
-			stageFlags      = {.FRAGMENT},
+			stageFlags = {.VERTEX, .FRAGMENT},
+		},
+		{
+			binding = 2,
+			descriptorType = .COMBINED_IMAGE_SAMPLER,
+			descriptorCount = 1,
+			stageFlags = {.FRAGMENT},
 		},
 	}
 
@@ -192,7 +204,7 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 	defer vk.DestroyShaderModule(vkh.device, fragModule, nil)
 
 	viBindings := [?]vk.VertexInputBindingDescription {
-		{binding = 0, stride = 32, inputRate = .VERTEX},
+		{binding = 0, stride = size_of(PointVertexInput), inputRate = .VERTEX},
 	}
 	vaDescriptors := [?]vk.VertexInputAttributeDescription {
 		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = 0}, // position

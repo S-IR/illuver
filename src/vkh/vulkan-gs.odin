@@ -78,6 +78,10 @@ BufferAlloc :: struct {
 	buffer: vk.Buffer,
 	alloc:  vma.Allocation,
 }
+ImageAlloc :: struct {
+	image: vk.Image,
+	alloc: vma.Allocation,
+}
 
 cameraBuffers := [MAX_FRAMES_IN_FLIGHT]BufferAlloc{}
 
@@ -840,7 +844,10 @@ vulkan_update_swapchain :: proc() {
 		chk(vk.CreateImageView(device, &viewCI, nil, &swpachainImageViews[i]))
 	}
 
-	if oldSwapchain != {} do vk.DestroySwapchainKHR(device, oldSwapchain, nil)
+	if oldSwapchain != {} {
+		vk.DeviceWaitIdle(device)
+		vk.DestroySwapchainKHR(device, oldSwapchain, nil)
+	}
 
 	vk.DestroyImageView(device, depthImageView, nil)
 	vma.destroy_image(allocator, depthImage, vmaDepthStencilAlloc)

@@ -24,6 +24,9 @@ biome_point_type :: #force_inline proc(
 	if u16_to_point_type(points[index_into_point_arrays(index)]) != .Air {
 		return
 	}
+	// points[index_into_point_arrays(index)] = u16(PointType.VeilStone)
+	// return
+	// fmt.println("worldXYZ", worldXYZ)
 	switch biome {
 	case .Crystalbloom:
 		crystalbloom_point_type(points, heightMap, worldXYZ, index, topY, seed)
@@ -98,7 +101,7 @@ crystalbloom_point_type :: proc(
 				transmute(i64)seed,
 				{f64(worldXYZ.x) * TREE_SCALE, f64(worldXYZ.z) * TREE_SCALE},
 			)
-			decoratorIf: if worldXYZ.y == topY && rand.float32() < .02 {
+			decoratorIf: if worldXYZ.y == (topY - 1) && rand.float32() < .02 {
 				MIN_TREE_RADIUS :: 3
 				leavesRadius: i32 = MIN_TREE_RADIUS + i32(math.round(rand.float32() * 2))
 
@@ -109,7 +112,7 @@ crystalbloom_point_type :: proc(
 				lowerBoundV2 := index.xz - leavesRadius
 				upperBoundV2 := index.xz + leavesRadius
 				if chunk_point_oob({lowerBoundV2[0], index.y, lowerBoundV2[1]}) do break decoratorIf
-				if chunk_point_oob({upperBoundV2[0], treeUpperBoundY + leavesRadius - MIN_Y, upperBoundV2[1]}) do break decoratorIf
+				if chunk_point_oob({upperBoundV2[0], treeUpperBoundY + leavesRadius - (worldXYZ.y - index.y), upperBoundV2[1]}) do break decoratorIf
 
 				crystalbloom_create_tree(
 					points = points,

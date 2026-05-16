@@ -10,14 +10,15 @@ crystalbloom_create_tree :: proc(
 	leavesRadius: i32,
 ) {
 	assert(treeUpperBoundY >= MIN_Y && treeUpperBoundY < MAX_Y)
-	if index.z >= CHUNK_STRIDE do return
-	if index.x >= CHUNK_STRIDE do return
+	if index.z >= CHUNK_STRIDE_XZ do return
+	if index.x >= CHUNK_STRIDE_XZ do return
 
 
 	twoDIdx := worldXYZ.xz
 	// yDiff := worldXYZ.y - index.y
+	chunkPosY := worldXYZ.y - index.y
 	for i: i32 = worldXYZ.y + 1; i < MAX_Y && i < treeUpperBoundY; i += 1 {
-		iIdx := i - MIN_Y
+		iIdx := i - chunkPosY
 		currIdx := [3]i32{index.x, iIdx, index.z}
 		point_place_update_height(points, heightMap, currIdx, u16(PointType.PinkTrunk))
 		point_place_update_height(points, heightMap, currIdx + {1, 0, 0}, u16(PointType.PinkTrunk))
@@ -32,7 +33,7 @@ crystalbloom_create_tree :: proc(
 	surround_with_leaves(
 		points,
 		heightMap,
-		{index.x, (treeUpperBoundY - 1) - MIN_Y, index.z},
+		{index.x, (treeUpperBoundY - 1) - chunkPosY, index.z},
 		leavesRadius,
 	)
 
@@ -46,14 +47,14 @@ crystalbloom_create_tree :: proc(
 		assert_point_array_index_valid(middleIdx)
 		leavesSq := leavesRadius * leavesRadius
 		for x := math.max(0, middleIdx.x - leavesRadius);
-		    x <= CHUNK_STRIDE && x < (middleIdx.x + leavesRadius + 1);
+		    x <= CHUNK_STRIDE_XZ && x < (middleIdx.x + leavesRadius + 1);
 		    x += 1 {
 
 			for y := math.max(0, middleIdx.y - leavesRadius);
 			    y < VERTS_PER_Y_DIR && y < (middleIdx.y + leavesRadius + 1);
 			    y += 1 {
 				for z := math.max(0, middleIdx.z - leavesRadius);
-				    z <= CHUNK_STRIDE && z < (middleIdx.z + leavesRadius + 1);
+				    z <= CHUNK_STRIDE_XZ && z < (middleIdx.z + leavesRadius + 1);
 				    z += 1 {
 					dx := x - middleIdx.x
 					dy := y - middleIdx.y

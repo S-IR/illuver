@@ -15,10 +15,10 @@ cbuffer ChunkInfo {
 };
 
 static const int VERTS_PER_X_DIR = 16;
-static const int VERTS_PER_Y_DIR = 256;
+static const int VERTS_PER_Y_DIR = 32;
 static const int VERTS_PER_Z_DIR = 16;
 static const int CUBES_PER_X_DIR = 15;
-static const int CUBES_PER_Y_DIR = 255;
+static const int CUBES_PER_Y_DIR = 31;
 static const int CUBES_PER_Z_DIR = 15;
 static const int VERT_STRIDE_X = VERTS_PER_Z_DIR * VERTS_PER_Y_DIR;
 

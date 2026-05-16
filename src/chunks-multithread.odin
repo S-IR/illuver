@@ -44,7 +44,7 @@ ChunkJobType :: union {
 }
 ChunkJob :: struct {
 	chunk: ^Chunk,
-	pos:   [2]i32,
+	pos:   [3]i32,
 	type:  ChunkJobType,
 }
 
@@ -119,7 +119,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 
 			heightMapIdx := v.x * VERTS_PER_Z_DIR + v.z
 			if u16_to_point_type(v.newPointType) == .Air {
-				if chunk.heightMap[heightMapIdx] == v.y + MIN_Y {
+				if chunk.heightMap[heightMapIdx] == chunk.pos.y + v.y {
 					currY := v.y - 1
 					for currY > 0 &&
 					    u16_to_point_type(
@@ -128,11 +128,11 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 						    .Air {
 						currY -= 1
 					}
-					chunk.heightMap[heightMapIdx] = currY + MIN_Y
+					chunk.heightMap[heightMapIdx] = chunk.pos.y + currY
 				}
 			} else {
-				if v.y + MIN_Y > chunk.heightMap[heightMapIdx] {
-					chunk.heightMap[heightMapIdx] = v.y + MIN_Y
+				if chunk.pos.y + v.y > chunk.heightMap[heightMapIdx] {
+					chunk.heightMap[heightMapIdx] = chunk.pos.y + v.y
 				}
 			}
 			irrf_set_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
@@ -145,26 +145,26 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 
 
 index_into_energy_cache :: #force_inline proc "contextless" (x, z: int) -> i32 {
-
-	chunkIndexIntoEnergyCacheInt := (x * ENERGY_TICKING_DIRECTION_LEN + z) * MAX_POINTS_INT
-
-
-	// when ODIN_DEBUG {
-	// 	a, of1 := intrinsics.overflow_mul(x, ENERGY_TICKING_DIRECTION_LEN)
-	// 	b, of2 := intrinsics.overflow_mul(a, MAX_POINTS_INT)
-	// 	c, of3 := intrinsics.overflow_mul(z, MAX_POINTS_INT)
-	// 	res, of4 := intrinsics.overflow_add(b, c)
-
-	// 	assert(!of1 && !of2 && !of3 && !of4)
-	// 	assert(chunkIndexIntoEnergyCacheInt < int(max(i32)))
-
-	// 	// assert(res >= 0)
-	// }
-
-	chunkIndexIntoEnergyCache := i32(chunkIndexIntoEnergyCacheInt)
+	unreachable()
+	// chunkIndexIntoEnergyCacheInt := (x * ENERGY_TICKING_DIRECTION_LEN + z) * MAX_POINTS_INT
 
 
-	return chunkIndexIntoEnergyCache
+	// // when ODIN_DEBUG {
+	// // 	a, of1 := intrinsics.overflow_mul(x, ENERGY_TICKING_DIRECTION_LEN)
+	// // 	b, of2 := intrinsics.overflow_mul(a, MAX_POINTS_INT)
+	// // 	c, of3 := intrinsics.overflow_mul(z, MAX_POINTS_INT)
+	// // 	res, of4 := intrinsics.overflow_add(b, c)
+
+	// // 	assert(!of1 && !of2 && !of3 && !of4)
+	// // 	assert(chunkIndexIntoEnergyCacheInt < int(max(i32)))
+
+	// // 	// assert(res >= 0)
+	// // }
+
+	// chunkIndexIntoEnergyCache := i32(chunkIndexIntoEnergyCacheInt)
+
+
+	// return chunkIndexIntoEnergyCache
 }
 // Wraps ChunkPrevEnergyCache access, handling cross-chunk boundaries transparently.
 // chunkX, chunkZ: the "home" chunk indices
@@ -207,7 +207,7 @@ index_into_energy_cache :: #force_inline proc "contextless" (x, z: int) -> i32 {
 // 	idx := baseChunk + index_into_point_arrays([3]i32{lx, localY, lz})
 // 	return ChunkPrevEnergyCache[idx], false
 // }
-chunk_init_add_thread :: proc(chunk: ^Chunk, pos: [2]i32) {
+chunk_init_add_thread :: proc(chunk: ^Chunk, pos: [3]i32) {
 	job := ChunkJob {
 		chunk = chunk,
 		pos   = pos,

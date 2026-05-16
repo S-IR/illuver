@@ -210,9 +210,10 @@ main :: proc() {
 	prevScreenWidth := gs.screenWidth
 	prevScreenHeight := gs.screenHeight
 	rand.reset(gs.seed)
-	middleOfChunksInNormalCoords := f32((CHUNKS_PER_DIRECTION / 2)) * CHUNK_SIZE + CHUNK_SIZE / 2
-	middleOfMiddleChunkPos := float3{middleOfChunksInNormalCoords, 0, middleOfChunksInNormalCoords}
-	// camera = Camera_new(pos = middleOfMiddleChunkPos)
+	// middleOfChunksInNormalCoords :=
+	// 	f32((CHUNKS_PER_XZ_DIRECTION / 2)) * CHUNK_SIZE + CHUNK_SIZE / 2
+	// middleOfMiddleChunkPos := float3{middleOfChunksInNormalCoords, 0, middleOfChunksInNormalCoords}
+	// // camera = Camera_new(pos = middleOfMiddleChunkPos)
 
 	free_all(context.temp_allocator)
 	when ODIN_DEBUG do defer vk.DeviceWaitIdle(vkh.device)
@@ -517,6 +518,15 @@ game_render :: proc(
 		{.1, .1, .1, 1},
 	)
 
+	ui.add_text(
+		fmt.tprintf("Camera pos: %v", currCamera.pos),
+		inventory.usedFont,
+		32,
+		10,
+		400,
+		{.1, .1, .1, 1},
+	)
+
 	if raycastDidHappen {
 		pointStr, _ := fmt.enum_value_to_string(u16_to_point_type(raycastPointHit))
 
@@ -556,6 +566,7 @@ game_render :: proc(
 	// if raycastDidHappen do fmt.println("raycast point:", raycastPointHit)
 	cb := vkh.drawCommandBuffers[vkh.frameIndex]
 	vk_start_frame_commands(cb)
+	shadow_pass(cb = cb, data = renderData.sun)
 
 	if vk_begin_frame(cb) do return
 	if raycastDidHappen && !leftClickIsHeldThisFrame {
@@ -575,7 +586,7 @@ game_render :: proc(
 		triPipeline = renderData.pointTrianglePipeline,
 		currCamera = currCamera^,
 		pointPipeline = renderData.pointDotPipeline,
-		sunUBOBuffer = renderData.sun.uboBuffers[vkh.frameIndex].buffer,
+		sun = renderData.sun,
 	)
 
 
@@ -630,7 +641,7 @@ vk_begin_frame :: proc(cb: vk.CommandBuffer) -> (skip: bool) {
 		cb,
 		&{
 			sType = .DEPENDENCY_INFO,
-			imageMemoryBarrierCount = 2,
+			imageMemoryBarrierCount = len(imageMemoryBarriers),
 			pImageMemoryBarriers = raw_data(imageMemoryBarriers[:]),
 		},
 	)

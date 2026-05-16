@@ -21,18 +21,23 @@ import vk "vendor:vulkan"
 import "vkh"
 
 
-CHUNK_SIZE :: 16
-CHUNK_STRIDE :: CHUNK_SIZE - 1
+// CHUNK_SIZE :: 16
+
 
 MIN_Y :: -128
 MAX_Y :: 127
-CHUNK_HEIGHT :: MAX_Y - MIN_Y
+// CHUNK_HEIGHT :: MAX_Y - MIN_Y
 DEFAULT_SURFACE_LEVEL :: -1
 
 
-VERTS_PER_X_DIR: i32 : CHUNK_SIZE
-VERTS_PER_Y_DIR: i32 : MAX_Y - MIN_Y + 1
-VERTS_PER_Z_DIR: i32 : CHUNK_SIZE
+VERTS_PER_X_DIR: i32 : 16
+VERTS_PER_Z_DIR: i32 : 16
+#assert(VERTS_PER_X_DIR == VERTS_PER_Z_DIR)
+
+VERTS_PER_Y_DIR: i32 : 32
+
+CHUNK_STRIDE_XZ :: VERTS_PER_X_DIR - 1
+CHUNK_STRIDE_Y :: VERTS_PER_Y_DIR - 1
 
 CUBES_PER_X_DIR: i32 : VERTS_PER_X_DIR - 1
 CUBES_PER_Y_DIR: i32 : VERTS_PER_Y_DIR - 1
@@ -54,7 +59,7 @@ Chunk :: struct {
 		},
 	},
 	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
-	pos:               int2,
+	pos:               [3]i32,
 	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
 	mutex:             sync.RW_Mutex,
 	totalPoints:       u32,
@@ -68,16 +73,33 @@ Chunk :: struct {
 // 	return c.points[x * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR + y * CUBES_PER_Z_DIR + z]
 // }
 
-CHUNKS_PER_DIRECTION := 5
+//MUST NOT BE PAIR
+CHUNKS_PER_XZ_DIRECTION: i32 = 7
+// #assert(CHUNKS_PER_XZ_DIRECTION % 2 != 0)
+
+//MUST NOT BE PAIR
+CHUNKS_PER_Y_DIRECTION: i32 = 3
+// #assert(CHUNKS_PER_Y_DIRECTION % 2 != 0)
 // #assert(CHUNKS_PER_DIRECTION < int(max(i32)))
-ENERGY_TICKING_DIRECTION_LEN := CHUNKS_PER_DIRECTION
+ENERGY_TICKING_DIRECTION_LEN := CHUNKS_PER_XZ_DIRECTION
 
 VERT_STRIDE_X :: VERTS_PER_Y_DIR * VERTS_PER_Z_DIR
 VERT_STRIDE_Y :: VERTS_PER_Z_DIR
-index_into_point_arrays_scalars :: #force_inline proc "contextless" (x, y, z: i32) -> i32 {
+index_into_point_arrays_scalars :: #force_inline proc(x, y, z: i32) -> i32 {
+	assert(x >= 0 && x < VERTS_PER_X_DIR)
+	assert(y >= 0 && y < VERTS_PER_Y_DIR)
+	assert(z >= 0 && z < VERTS_PER_Z_DIR)
+
 	return x * VERT_STRIDE_X + y * VERT_STRIDE_Y + z
 }
-index_into_point_arrays_vector :: #force_inline proc "contextless" (v: [3]i32) -> i32 {
+index_into_point_arrays_vector :: #force_inline proc(v: [3]i32) -> i32 {
+	assert(v.x >= 0 && v.x < VERTS_PER_X_DIR)
+	assert(v.y >= 0 && v.y < VERTS_PER_Y_DIR)
+	assert(v.z >= 0 && v.z < VERTS_PER_Z_DIR)
+
+	return v.x * VERT_STRIDE_X + v.y * VERT_STRIDE_Y + v.z
+}
+index_into_point_arrays_vector_contextless :: #force_inline proc "contextless" (v: [3]i32) -> i32 {
 	return v.x * VERT_STRIDE_X + v.y * VERT_STRIDE_Y + v.z
 }
 index_into_point_arrays :: proc {
@@ -105,24 +127,20 @@ CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_INDICES * (size_of([4]f32) + size_of([4]f32)
 chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool, prev: u16) {
 
 	for chunk in renderedChunks {
-		minF32 := [2]f32{f32(chunk.pos[0]), f32(chunk.pos[1])}
-		maxF32 := [2]f32{f32(chunk.pos[0] + CHUNK_STRIDE), f32(chunk.pos[1] + CHUNK_STRIDE)}
+		minF32 := linalg.to_f32(chunk.pos)
+		maxF32 :=
+			minF32 +
+			linalg.to_f32([3]i32{CHUNK_STRIDE_XZ + 1, CHUNK_STRIDE_Y + 1, CHUNK_STRIDE_XZ + 1})
 
 		if worldPos.x < minF32[0] || worldPos.x > maxF32[0] do continue
-		if worldPos.z < minF32[1] || worldPos.z > maxF32[1] do continue
+		if worldPos.z < minF32[2] || worldPos.z > maxF32[2] do continue
 
-		indexX := i32(math.round(worldPos.x - minF32[0]))
-		indexZ := i32(math.round(worldPos.z - minF32[1]))
-		indexY := i32(math.round(worldPos.y) - MIN_Y)
+		index := linalg.to_i32(linalg.round(worldPos - minF32))
 
-		assert(indexX >= 0 && indexX < VERTS_PER_X_DIR)
-		assert(indexY >= 0 && indexY < VERTS_PER_Y_DIR)
-		assert(indexZ >= 0 && indexZ < VERTS_PER_Z_DIR)
-
-		if u16_to_point_type(chunk.points[index_into_point_arrays(indexX, indexY, indexZ)]) == newType do continue
+		if u16_to_point_type(chunk.points[index_into_point_arrays(index)]) == newType do continue
 		changed = true
-		prev = chunk.points[index_into_point_arrays(indexX, indexY, indexZ)]
-		chunk_point_edit_add_thread(chunk, indexX, indexY, indexZ, u16(newType))
+		prev = chunk.points[index_into_point_arrays(index)]
+		chunk_point_edit_add_thread(chunk, index.x, index.y, index.z, u16(newType))
 	}
 
 	return changed, prev
@@ -140,116 +158,258 @@ chunks_frame_update :: proc(c: ^camera.Camera) {
 }
 chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 	tracy.Zone()
-	half := CHUNKS_PER_DIRECTION / 2
-
-	xzCurr := int2 {
-		i32(math.floor(c.pos.x / f32(CHUNK_STRIDE))),
-		i32(math.floor(c.pos.z / f32(CHUNK_STRIDE))),
+	half := [3]i32 {
+		CHUNKS_PER_XZ_DIRECTION / 2,
+		CHUNKS_PER_Y_DIRECTION / 2,
+		CHUNKS_PER_XZ_DIRECTION / 2,
 	}
-	xzPrev := int2 {
-		i32(math.floor(f32(rc(half, half).pos[0]) / f32(CHUNK_STRIDE))),
-		i32(math.floor(f32(rc(half, half).pos[1]) / f32(CHUNK_STRIDE))),
-	}
-	if xzCurr == xzPrev do return
+	stride := [3]i32{CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
 
-	delta := xzCurr - xzPrev
+	xyzCurr := linalg.to_i32(
+		linalg.floor(
+			c.pos / [3]f32{f32(CHUNK_STRIDE_XZ), f32(CHUNK_STRIDE_Y), f32(CHUNK_STRIDE_XZ)},
+		),
+	)
+	xyzPrev := rc(half).pos / stride
 
-	if delta.x != 0 {
-		count := abs(delta.x)
-		for i in 0 ..< count {
-			if delta.x > 0 {
-				recycled := make([]^Chunk, CHUNKS_PER_DIRECTION, context.temp_allocator)
-				for z in 0 ..< CHUNKS_PER_DIRECTION {
-					recycled[z] = rc(0, z)
-				}
-				for x in 0 ..< CHUNKS_PER_DIRECTION - 1 {
-					for z in 0 ..< CHUNKS_PER_DIRECTION {
-						rc_set(x, z, rc(x + 1, z))
+	if xyzCurr == xyzPrev do return
+
+	delta := xyzCurr - xyzPrev
+
+	shift_chunks :: proc(dir: enum {
+			X,
+			Y,
+			Z,
+		}, delta: i32, xyzCurr, half: [3]i32) {
+		if delta == 0 do return
+		count := abs((delta))
+		isPositiveShift := delta > 0
+
+		if dir == .X {
+			recycled := make(
+				[dynamic]^Chunk,
+				count * CHUNKS_PER_Y_DIRECTION * CHUNKS_PER_XZ_DIRECTION,
+				context.temp_allocator,
+			)
+			idx :: #force_inline proc(p, y, z: i32) -> i32 {return(
+					p * CHUNKS_PER_Y_DIRECTION * CHUNKS_PER_XZ_DIRECTION +
+					y * CHUNKS_PER_XZ_DIRECTION +
+					z \
+				)}
+
+			if isPositiveShift {
+				for p in 0 ..< count {
+					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							recycled[idx(p, y, z)] = rc(p, y, z)
+						}
 					}
 				}
-				for z in 0 ..< CHUNKS_PER_DIRECTION {
-					rc_set(CHUNKS_PER_DIRECTION - 1, z, recycled[z])
-					pos := int2 {
-						(xzCurr[0] + i32(CHUNKS_PER_DIRECTION - 1 - half) + i32(i)) * CHUNK_STRIDE,
-						(xzCurr[1] + i32(z - half)) * CHUNK_STRIDE,
+				for x in 0 ..< CHUNKS_PER_XZ_DIRECTION - count {
+					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(x, y, z, rc(x + count, y, z))
+						}
 					}
-					chunk_init_add_thread(recycled[z], pos)
+				}
+				for p in 0 ..< count {
+					nx := CHUNKS_PER_XZ_DIRECTION - 1 - p
+					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(nx, y, z, recycled[idx(p, y, z)])
+							posChunkCoord := xyzCurr + [3]i32{i32(nx), i32(y), i32(z)} - half
+							pos :=
+								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+							chunk_init_add_thread(rc(nx, y, z), pos)
+						}
+					}
 				}
 			} else {
-				recycled := make([]^Chunk, CHUNKS_PER_DIRECTION, context.temp_allocator)
-				for z in 0 ..< CHUNKS_PER_DIRECTION {
-					recycled[z] = rc(CHUNKS_PER_DIRECTION - 1, z)
-				}
-				for x := CHUNKS_PER_DIRECTION - 1; x > 0; x -= 1 {
-					for z in 0 ..< CHUNKS_PER_DIRECTION {
-						rc_set(x, z, rc(x - 1, z))
+				for p in 0 ..< count {
+					sx := CHUNKS_PER_XZ_DIRECTION - 1 - p
+					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							recycled[idx(p, y, z)] = rc(sx, y, z)
+						}
 					}
 				}
-				for z in 0 ..< CHUNKS_PER_DIRECTION {
-					rc_set(0, z, recycled[z])
-					pos := int2 {
-						(xzCurr[0] + i32(0 - half) - i32(i)) * CHUNK_STRIDE,
-						(xzCurr[1] + i32(z - half)) * CHUNK_STRIDE,
+				for x := CHUNKS_PER_XZ_DIRECTION - 1; x >= count; x -= 1 {
+					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(x, y, z, rc(x - count, y, z))
+						}
 					}
-					chunk_init_add_thread(recycled[z], pos)
+				}
+				for p in 0 ..< count {
+					nx := p
+					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(nx, y, z, recycled[idx(p, y, z)])
+							posChunkCoord := xyzCurr + [3]i32{i32(nx), i32(y), i32(z)} - half
+							pos :=
+								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+							chunk_init_add_thread(rc(nx, y, z), pos)
+						}
+					}
 				}
 			}
+			return
 		}
-	}
 
-	if delta[1] != 0 {
-		count := abs(delta[1])
-		for i in 0 ..< count {
-			if delta[1] > 0 {
-				recycled := make([]^Chunk, CHUNKS_PER_DIRECTION, context.temp_allocator)
-				for x in 0 ..< CHUNKS_PER_DIRECTION {
-					recycled[x] = rc(x, 0)
-				}
-				for z in 0 ..< CHUNKS_PER_DIRECTION - 1 {
-					for x in 0 ..< CHUNKS_PER_DIRECTION {
-						rc_set(x, z, rc(x, z + 1))
+		if dir == .Y {
+			recycled := make(
+				[dynamic]^Chunk,
+				count * CHUNKS_PER_XZ_DIRECTION * CHUNKS_PER_XZ_DIRECTION,
+				context.temp_allocator,
+			)
+			idx :: #force_inline proc(p, x, z: i32) -> i32 {return(
+					p * CHUNKS_PER_XZ_DIRECTION * CHUNKS_PER_XZ_DIRECTION +
+					x * CHUNKS_PER_XZ_DIRECTION +
+					z \
+				)}
+
+			if isPositiveShift {
+				for p in 0 ..< count {
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							recycled[idx(p, x, z)] = rc(x, p, z)
+						}
 					}
 				}
-				for x in 0 ..< CHUNKS_PER_DIRECTION {
-					rc_set(x, CHUNKS_PER_DIRECTION - 1, recycled[x])
-					pos := int2 {
-						(xzCurr[0] + i32(x - half)) * CHUNK_STRIDE,
-						(xzCurr[1] + i32(CHUNKS_PER_DIRECTION - 1 - half) + i32(i)) * CHUNK_STRIDE,
+				for y in 0 ..< CHUNKS_PER_Y_DIRECTION - count {
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(x, y, z, rc(x, y + count, z))
+						}
 					}
-					chunk_init_add_thread(recycled[x], pos)
+				}
+				for p in 0 ..< count {
+					ny := CHUNKS_PER_Y_DIRECTION - 1 - p
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(x, ny, z, recycled[idx(p, x, z)])
+							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(ny), i32(z)} - half
+							pos :=
+								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+							chunk_init_add_thread(rc(x, ny, z), pos)
+						}
+					}
 				}
 			} else {
-				recycled := make([]^Chunk, CHUNKS_PER_DIRECTION, context.temp_allocator)
-				for x in 0 ..< CHUNKS_PER_DIRECTION {
-					recycled[x] = rc(x, CHUNKS_PER_DIRECTION - 1)
-				}
-				for z := CHUNKS_PER_DIRECTION - 1; z > 0; z -= 1 {
-					for x in 0 ..< CHUNKS_PER_DIRECTION {
-						rc_set(x, z, rc(x, z - 1))
+				for p in 0 ..< count {
+					sy := CHUNKS_PER_Y_DIRECTION - 1 - p
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							recycled[idx(p, x, z)] = rc(x, sy, z)
+						}
 					}
 				}
-				for x in 0 ..< CHUNKS_PER_DIRECTION {
-					rc_set(x, 0, recycled[x])
-					pos := int2 {
-						(xzCurr[0] + i32(x - half)) * CHUNK_STRIDE,
-						(xzCurr[1] + i32(0 - half) - i32(i)) * CHUNK_STRIDE,
+				for y := CHUNKS_PER_Y_DIRECTION - 1; y >= count; y -= 1 {
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(x, y, z, rc(x, y - count, z))
+						}
 					}
-					chunk_init_add_thread(recycled[x], pos)
+				}
+				for p in 0 ..< count {
+					ny := p
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+							rc_set(x, ny, z, recycled[idx(p, x, z)])
+							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(ny), i32(z)} - half
+							pos :=
+								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+							chunk_init_add_thread(rc(x, ny, z), pos)
+						}
+					}
 				}
 			}
+			return
+		}
+
+		if dir == .Z {
+			recycled := make(
+				[dynamic]^Chunk,
+				count * CHUNKS_PER_XZ_DIRECTION * CHUNKS_PER_Y_DIRECTION,
+				context.temp_allocator,
+			)
+			idx :: #force_inline proc(p, x, y: i32) -> i32 {return(
+					p * CHUNKS_PER_XZ_DIRECTION * CHUNKS_PER_Y_DIRECTION +
+					x * CHUNKS_PER_Y_DIRECTION +
+					y \
+				)}
+
+			if isPositiveShift {
+				for p in 0 ..< count {
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+							recycled[idx(p, x, y)] = rc(x, y, p)
+						}
+					}
+				}
+				for z in 0 ..< CHUNKS_PER_XZ_DIRECTION - count {
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+							rc_set(x, y, z, rc(x, y, z + count))
+						}
+					}
+				}
+				for p in 0 ..< count {
+					nz := CHUNKS_PER_XZ_DIRECTION - 1 - p
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+							rc_set(x, y, nz, recycled[idx(p, x, y)])
+							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(y), i32(nz)} - half
+							pos :=
+								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+							chunk_init_add_thread(rc(x, y, nz), pos)
+						}
+					}
+				}
+			} else {
+				for p in 0 ..< count {
+					sz := CHUNKS_PER_XZ_DIRECTION - 1 - p
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+							recycled[idx(p, x, y)] = rc(x, y, sz)
+						}
+					}
+				}
+				for z := CHUNKS_PER_XZ_DIRECTION - 1; z >= count; z -= 1 {
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+							rc_set(x, y, z, rc(x, y, z - count))
+						}
+					}
+				}
+				for p in 0 ..< count {
+					nz := p
+					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
+						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
+							rc_set(x, y, nz, recycled[idx(p, x, y)])
+							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(y), i32(nz)} - half
+							pos :=
+								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+							chunk_init_add_thread(rc(x, y, nz), pos)
+						}
+					}
+				}
+			}
+			return
 		}
 	}
-	centerChunk := rc(CHUNKS_PER_DIRECTION / 2, CHUNKS_PER_DIRECTION / 2)
-	centerChunkCoord := centerChunk.pos / CHUNK_STRIDE
+	if delta.x != 0 {shift_chunks(.X, delta.x, xyzCurr, half)}
+	if delta.y != 0 {shift_chunks(.Y, delta.y, xyzCurr, half)}
+	if delta.z != 0 {shift_chunks(.Z, delta.z, xyzCurr, half)}
 
-	assert(chunk_contains_point(centerChunk.pos, camera.curr.pos))
-
+	assert(chunk_contains_point(rc(half).pos, camera.curr.pos))
 }
 
 
-is_chunk_in_camera_frustrum :: proc(pos: [2]i32, c: camera.Camera) -> bool {
-	min := [3]f32{f32(pos[0]), f32(MIN_Y), f32(pos[1])}
-	max := [3]f32{f32((pos[0] + CHUNK_SIZE)), f32(MAX_Y), f32((pos[1] + CHUNK_SIZE))}
+is_chunk_in_camera_frustrum :: proc(pos: [3]i32, c: camera.Camera) -> bool {
+	min := linalg.to_f32(pos)
+	max :=
+		min + linalg.to_f32([3]i32{CHUNK_STRIDE_XZ + 1, CHUNK_STRIDE_Y + 1, CHUNK_STRIDE_XZ + 1})
 
 	view, proj := camera.Camera_view_proj(c)
 	vp := proj * view
@@ -283,49 +443,58 @@ get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) 
 		assert(worldPosRounded == worldGridPos)
 	}
 
-	worldCoordXYZ := [3]i32{i32(worldGridPos.x), i32(worldGridPos.y), i32(worldGridPos.z)}
+	worldCoordXYZ := linalg.to_i32(linalg.round(worldGridPos))
 
+	//oob check
 	if worldCoordXYZ.y < MIN_Y || worldCoordXYZ.y > MAX_Y {
+		when ODIN_DEBUG {
+			fmt.printfln("OOB call to get_point_at_world_pos", worldGridPos)
+		}
 		return 0
 	}
 
-	chunkCoordXZ := [2]i32 {
-		i32(math.floor(f32(worldCoordXYZ.x) / CHUNK_STRIDE)),
-		i32(math.floor(f32(worldCoordXYZ.z) / CHUNK_STRIDE)),
+	strideVector := [3]i32{CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+	chunkCoord :=
+		linalg.to_i32(
+			linalg.floor(
+				linalg.to_f32(worldCoordXYZ) /
+				[3]f32{f32(CHUNK_STRIDE_XZ), f32(CHUNK_STRIDE_Y), f32(CHUNK_STRIDE_XZ)},
+			),
+		) *
+		strideVector
+	middleVisibleChunkIndex := [3]i32 {
+		CHUNKS_PER_XZ_DIRECTION / 2,
+		CHUNKS_PER_Y_DIRECTION / 2,
+		CHUNKS_PER_XZ_DIRECTION / 2,
 	}
+	centerChunk := rc(middleVisibleChunkIndex)
+	centerChunkCoord := centerChunk.pos
 
-	centerChunk := rc(CHUNKS_PER_DIRECTION / 2, CHUNKS_PER_DIRECTION / 2)
-	centerChunkCoord := centerChunk.pos / CHUNK_STRIDE
 
 	assert(chunk_contains_point(centerChunk.pos, currCamera.pos))
-	half := i32(CHUNKS_PER_DIRECTION / 2)
-	arrayIndex := [2]i32 {
-		half + (chunkCoordXZ[0] - centerChunkCoord[0]),
-		half + (chunkCoordXZ[1] - centerChunkCoord[1]),
-	}
+	arrayIndex := middleVisibleChunkIndex + ((chunkCoord - centerChunkCoord) / strideVector)
+
 	// assert(!(arrayIndex.x < 0 || arrayIndex.x >= CHUNKS_PER_DIRECTION))
 	// assert(!(arrayIndex.y < 0 || arrayIndex.y >= CHUNKS_PER_DIRECTION))
+	// if arrayIndex.x < 0 || arrayIndex.x >= i32(CHUNKS_PER_XZ_DIRECTION) do return 0
+	// if arrayIndex.y < 0 || arrayIndex.y >= i32(CHUNKS_PER_XZ_DIRECTION) do return 0
 
-	if arrayIndex.x < 0 || arrayIndex.x >= i32(CHUNKS_PER_DIRECTION) do return 0
-	if arrayIndex.y < 0 || arrayIndex.y >= i32(CHUNKS_PER_DIRECTION) do return 0
+	chunk := rc(arrayIndex)
 
-	chunk := rc(int(arrayIndex[0]), int(arrayIndex[1]))
-
-	localXYZ := [3]i32 {
-		worldCoordXYZ.x - chunk.pos.x,
-		worldCoordXYZ.y - MIN_Y,
-		worldCoordXYZ.z - chunk.pos.y,
-	}
-
+	localXYZ := worldCoordXYZ - chunk.pos
 	assert_point_array_index_valid(localXYZ)
 
 	return chunk.points[index_into_point_arrays(localXYZ)]
 }
-chunk_contains_point :: proc(chunkXZ: [2]i32, pos: [3]f32) -> bool {
-	posXZ := [2]i32{i32(math.round(pos.x)), i32(math.round(pos.z))}
+chunk_contains_point :: proc(chunkXZ: [3]i32, pos: [3]f32) -> bool {
+	posXZ := linalg.to_i32(linalg.round(pos))
 	diff := posXZ - chunkXZ
 
-	return diff[0] >= 0 && diff[1] >= 0 && diff[0] <= CHUNK_STRIDE && diff[1] <= CHUNK_STRIDE
+	xGood := diff.x >= 0 && diff.x <= CHUNK_STRIDE_XZ
+	yGood := diff.y >= 0 && diff.y <= CHUNK_STRIDE_Y
+	zGood := diff.z >= 0 && diff.z <= CHUNK_STRIDE_XZ
+
+	return xGood && yGood && zGood
 }
 assert_height_map_index_valid_scalars :: #force_inline proc(x, z: i32) {
 	when ODIN_DEBUG {

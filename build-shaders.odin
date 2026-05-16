@@ -104,23 +104,31 @@ compile_shader :: proc(path, dir, ext: string, stage: enum {
 	// Output path
 	outputName: string
 	if stage == .compute {
-		// For compute shaders, remove ".comp" part if present
 		outputName = strings.clone(name, context.temp_allocator)
 		outputName, _ = strings.replace_all(outputName, ".comp", "")
 	} else {
 		outputName = name
 	}
-	outputPath, _ := filepath.join(
-		{dir, strings.join({outputName, stageString, ext}, ".")},
-		context.temp_allocator,
-	)
+	outputPath: string
+	if strings.contains(outputName, stageString) {
+		outputPath, _ = filepath.join(
+			{dir, strings.join({outputName, ext}, ".")},
+			context.temp_allocator,
+		)
+	} else {
+		outputPath, _ = filepath.join(
+			{dir, strings.join({outputName, stageString, ext}, ".")},
+			context.temp_allocator,
+		)
+	}
+
 	append(&cmd, "-I", filepath.dir(path))
 
 	append(&cmd, "-o", outputPath)
 	when ODIN_DEBUG {
-		append(&cmd, "-g") // Include debug info
+		append(&cmd, "-g")
 	} else {
-		append(&cmd, "-O3") // Include debug info
+		append(&cmd, "-O3")
 	}
 	append(&cmd, path)
 

@@ -180,6 +180,7 @@ chunk_geometry_calculate :: proc(
 	state: ^ChunkWorkerState,
 	pipeline: vkh.PipelineData,
 ) {
+	if chunk.points == {} do return
 	vk.WaitForFences(vkh.device, 1, &state.computeFence, true, max(u64))
 	vk.ResetFences(vkh.device, 1, &state.computeFence)
 
@@ -188,7 +189,6 @@ chunk_geometry_calculate :: proc(
 		state.computeCB,
 		&vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
 	)
-
 
 	zero := u32(0)
 	vk.CmdFillBuffer(
@@ -244,8 +244,12 @@ chunk_geometry_calculate :: proc(
 		nil,
 	)
 
+	assert(chunk.pos.x % CHUNK_STRIDE_XZ == 0)
+	assert(chunk.pos.y % CHUNK_STRIDE_Y == 0)
+	assert(chunk.pos.z % CHUNK_STRIDE_XZ == 0)
+
 	uniforms := ComputeMeshUniforms {
-		chunkMin = {chunk.pos[0], MIN_Y, chunk.pos[1], 0},
+		chunkMin = {chunk.pos.x, chunk.pos.y, chunk.pos.z, 0},
 		seed     = u32(gs.seed),
 	}
 
@@ -255,7 +259,6 @@ chunk_geometry_calculate :: proc(
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.uniform.alloc)
 
 	vk.CmdBindPipeline(state.computeCB, .COMPUTE, pipeline.pipeline)
-
 
 	writes := [4]vk.WriteDescriptorSet {
 		{ 	// binding 0: pointsInput
@@ -308,7 +311,6 @@ chunk_geometry_calculate :: proc(
 		raw_data(writes[:]),
 	)
 
-
 	outBarriers := [1]vk.BufferMemoryBarrier {
 		{
 			sType = .BUFFER_MEMORY_BARRIER,
@@ -340,28 +342,27 @@ chunk_geometry_calculate :: proc(
 
 	vk.EndCommandBuffer(state.computeCB)
 
-
-	submitInfo := vk.SubmitInfo {
-		sType              = .SUBMIT_INFO,
-		commandBufferCount = 1,
-		pCommandBuffers    = &state.computeCB,
+	cmdBufInfo := vk.CommandBufferSubmitInfo {
+		sType         = .COMMAND_BUFFER_SUBMIT_INFO,
+		commandBuffer = state.computeCB,
+	}
+	submitInfo := vk.SubmitInfo2 {
+		sType                  = .SUBMIT_INFO_2,
+		commandBufferInfoCount = 1,
+		pCommandBufferInfos    = &cmdBufInfo,
 	}
 	sync.mutex_lock(&vkh.computeQueueMutex)
-	vk.QueueSubmit(vkh.computeQueue, 1, &submitInfo, state.computeFence)
+	vk.QueueSubmit2(vkh.computeQueue, 1, &submitInfo, state.computeFence)
 	sync.mutex_unlock(&vkh.computeQueueMutex)
 
 	vk.WaitForFences(vkh.device, 1, &state.computeFence, true, max(u64))
-	vk.ResetFences(vkh.device, 1, &state.computeFence)
+	// vk.ResetFences(vkh.device, 1, &state.computeFence)
 
 	countersPtr: rawptr
 	vma.map_memory(vkh.allocator, chunk.buffers.compute.counter.alloc, &countersPtr)
 	counts := (^u32)(countersPtr)
 	chunk.totalPoints = counts^
-	// Empty chunks (e.g. all-air sky chunks) legitimately produce zero vertices;
-	// CmdDraw(0, ...) is valid, so don't assert nonzero.
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
-
-
 }
 chunk_copy_current_to_other_frames :: proc(
 	chunk: ^Chunk,
@@ -446,6 +447,7 @@ chunk_copy_current_to_other_frames :: proc(
 		signalSemaphoreInfoCount = u32(signalCount),
 		pSignalSemaphoreInfos    = raw_data(signalInfos[:signalCount]),
 	}
+	vk.ResetFences(vkh.device, 1, &state.computeFence)
 	vkh.chk(vk.QueueSubmit2(vkh.computeQueue, 1, &submitInfo, state.computeFence))
 }
 chunk_geometry_calc_buffers_destroy :: proc(chunk: ^Chunk) {

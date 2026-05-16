@@ -8,9 +8,13 @@ cbuffer CameraUBO {
 
 [[vk::binding(1, 0)]]
 cbuffer SunUBO {
-  float4 sunWorldPos; // xyz = world position
-  float4 sunColor;    // rgb = color, a = intensity
+  float4 sunWorldPos;
+  float4 sunColor;
+  float4x4 lightVP;
 }
+
+[[vk::binding(2, 0)]]
+Sampler2DShadow shadowMap;
 
 struct PushConstants {
   uint isPointPass;
@@ -31,6 +35,7 @@ struct VertexOutput {
   nointerpolation float4 color : COLOR0;
   float3 normal : NORMAL0;
   float3 worldPos : TEXCOORD1;
+  float4 shadowCoord : TEXCOORD2;
 };
 
 [shader("vertex")]
@@ -41,6 +46,8 @@ VertexOutput vertexMain(VertexInput input) {
   output.position = mul(proj, viewPos);
   output.color = pointFinalColor(uint16_t(input.pointVal));
   output.normal = input.normal;
+
+  output.shadowCoord = mul(lightVP, float4(input.position, 1.0));
   return output;
 }
 
@@ -49,9 +56,13 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   if (pc.isPointPass != 0) {
     return float4(0.0, 0.0, 0.0, 1.0);
   }
+  float2 uv = (input.shadowCoord.xy / input.shadowCoord.w) * 0.5 + 0.5;
+  float depth = input.shadowCoord.z / input.shadowCoord.w;
+  float shadow = shadowMap.SampleCmp(uv, depth - 0.005);
+
   float3 surfaceColor = input.color.xyz;
 
-  float sunAmbientStr = 0.07;
+  float sunAmbientStr = 0.15;
   float3 ambient = sunAmbientStr * surfaceColor;
 
   // diffuse
@@ -78,5 +89,5 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   }
   float3 specular = spec * 0.3 * sunColor.xyz * attenuation;
 
-  return float4(ambient + diffuse + specular, 1.0);
+  return float4(ambient + shadow * (diffuse + specular), 1.0);
 }
