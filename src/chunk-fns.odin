@@ -25,7 +25,8 @@ import "vkh"
 
 
 MIN_Y :: -128
-MAX_Y :: 127
+MAX_Y :: MIN_Y + (CHUNK_STRIDE_Y * IRRF_CHUNKS_PER_FILE_PER_Y_DIR * 2)
+#assert(MAX_Y > 0)
 // CHUNK_HEIGHT :: MAX_Y - MIN_Y
 DEFAULT_SURFACE_LEVEL :: -1
 
@@ -132,8 +133,9 @@ chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool,
 			minF32 +
 			linalg.to_f32([3]i32{CHUNK_STRIDE_XZ + 1, CHUNK_STRIDE_Y + 1, CHUNK_STRIDE_XZ + 1})
 
-		if worldPos.x < minF32[0] || worldPos.x > maxF32[0] do continue
-		if worldPos.z < minF32[2] || worldPos.z > maxF32[2] do continue
+		if worldPos.x < minF32.x || worldPos.x > maxF32.x do continue
+		if worldPos.y < minF32.y || worldPos.x > maxF32.y do continue
+		if worldPos.z < minF32.z || worldPos.z > maxF32.z do continue
 
 		index := linalg.to_i32(linalg.round(worldPos - minF32))
 

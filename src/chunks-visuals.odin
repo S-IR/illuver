@@ -271,7 +271,7 @@ chunk_init :: proc(chunk: ^Chunk, pos: [3]i32, state: ^ChunkWorkerState) {
 
 	// isCrystalblooomArr := [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]bool{}
 	if !gottenDataFromIrrf {
-		when !DEBUG_MODE_IGNORE_SAVE do defer irrf_set_chunk(
+		when !DEBUG_MODE_IGNORE_SAVE do defer irrf_init_chunk(
 			chunk.pos,
 			&chunk.points,
 			&chunk.heightMap,
@@ -614,7 +614,12 @@ chunks_draw_shadow :: proc(
 		cb,
 		0,
 		1,
-		&vk.Viewport{width = f32(SHADOW_MAP_SIZE), height = f32(SHADOW_MAP_SIZE), minDepth = 0, maxDepth = 1},
+		&vk.Viewport {
+			width = f32(SHADOW_MAP_SIZE),
+			height = f32(SHADOW_MAP_SIZE),
+			minDepth = 0,
+			maxDepth = 1,
+		},
 	)
 	vk.CmdSetScissor(
 		cb,
@@ -631,7 +636,7 @@ chunks_draw_shadow :: proc(
 		pBufferInfo     = &vk.DescriptorBufferInfo {
 			buffer = lightVPBuffer,
 			offset = 0,
-			range  = vk.DeviceSize(size_of(SunUBO)),
+			range = vk.DeviceSize(size_of(SunUBO)),
 		},
 	}
 	vk.CmdPushDescriptorSetKHR(cb, .GRAPHICS, shadowPipeline.layout, 0, 1, &write)
