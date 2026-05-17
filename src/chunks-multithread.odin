@@ -116,7 +116,6 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 			chunk_create_gpu_geometry(chunk, state, v.frameIndex)
 		case EditUpdateJob:
 			chunk.points[index_into_point_arrays(v.x, v.y, v.z)] = v.newPointType
-
 			heightMapIdx := v.x * VERTS_PER_Z_DIR + v.z
 			if u16_to_point_type(v.newPointType) == .Air {
 				if chunk.heightMap[heightMapIdx] == chunk.pos.y + v.y {

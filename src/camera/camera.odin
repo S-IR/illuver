@@ -83,7 +83,7 @@ camera_process_keyboard_movement :: proc(c: ^Camera, below: f32) {
 		if keys[sdl.Scancode.SPACE] != false {
 			movementVector += WORLD_UP
 		}
-		if keys[sdl.Scancode.LALT] != false || keys[sdl.Scancode.RALT] != false {
+		if keys[sdl.Scancode.X] != false {
 			movementVector -= WORLD_UP
 		}
 

@@ -1,4 +1,5 @@
 [
+  //build the VMA ON RELEASES MANUALLY
   {
     "label": "build-prod",
     "command": "odin build src -out:build/prod.exe  -vet-shadowing -o:aggressive",

@@ -75,7 +75,7 @@ Chunk :: struct {
 // }
 
 //MUST NOT BE PAIR
-CHUNKS_PER_XZ_DIRECTION: i32 = 7
+CHUNKS_PER_XZ_DIRECTION: i32 = 5
 // #assert(CHUNKS_PER_XZ_DIRECTION % 2 != 0)
 
 //MUST NOT BE PAIR
@@ -127,17 +127,16 @@ INDEX_TYPE_USED_IN_CHUNKS :: u32
 CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_INDICES * (size_of([4]f32) + size_of([4]f32))
 chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool, prev: u16) {
 
+	worldPosI32 := linalg.to_i32(linalg.round(worldPos))
 	for chunk in renderedChunks {
-		minF32 := linalg.to_f32(chunk.pos)
-		maxF32 :=
-			minF32 +
-			linalg.to_f32([3]i32{CHUNK_STRIDE_XZ + 1, CHUNK_STRIDE_Y + 1, CHUNK_STRIDE_XZ + 1})
+		min := chunk.pos
+		max := min + [3]i32{CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
 
-		if worldPos.x < minF32.x || worldPos.x > maxF32.x do continue
-		if worldPos.y < minF32.y || worldPos.x > maxF32.y do continue
-		if worldPos.z < minF32.z || worldPos.z > maxF32.z do continue
+		if worldPosI32.x < min.x || worldPosI32.x > max.x do continue
+		if worldPosI32.y < min.y || worldPosI32.y > max.y do continue
+		if worldPosI32.z < min.z || worldPosI32.z > max.z do continue
 
-		index := linalg.to_i32(linalg.round(worldPos - minF32))
+		index := worldPosI32 - min
 
 		if u16_to_point_type(chunk.points[index_into_point_arrays(index)]) == newType do continue
 		changed = true

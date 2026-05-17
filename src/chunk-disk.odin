@@ -20,9 +20,17 @@ import "vendor:zlib"
 // illuver realm region file
 IRRF_CHUNKS_PER_FILE_PER_Y_DIR :: 4
 IRRF_CHUNKS_PER_FILE_PER_XZ_DIR :: 6
-IRRF_CHUNKS_PER_FILE :: IRRF_CHUNKS_PER_FILE_PER_XZ_DIR * IRRF_CHUNKS_PER_FILE_PER_XZ_DIR
+IRRF_CHUNKS_PER_FILE ::
+	IRRF_CHUNKS_PER_FILE_PER_XZ_DIR *
+	IRRF_CHUNKS_PER_FILE_PER_Y_DIR *
+	IRRF_CHUNKS_PER_FILE_PER_XZ_DIR
 
-index_into_irrf_scalar :: #force_inline proc "contextless" (x, y, z: i32) -> i32 {
+index_into_irrf_scalar :: #force_inline proc(x, y, z: i32) -> i32 {
+	assert(x >= 0 && x < IRRF_CHUNKS_PER_FILE_PER_XZ_DIR)
+	assert(y >= 0 && y < IRRF_CHUNKS_PER_FILE_PER_Y_DIR)
+	assert(z >= 0 && z < IRRF_CHUNKS_PER_FILE_PER_XZ_DIR)
+
+
 	return(
 		x * IRRF_CHUNKS_PER_FILE_PER_XZ_DIR * IRRF_CHUNKS_PER_FILE_PER_Y_DIR +
 		y * IRRF_CHUNKS_PER_FILE_PER_XZ_DIR +
@@ -30,7 +38,10 @@ index_into_irrf_scalar :: #force_inline proc "contextless" (x, y, z: i32) -> i32
 	)
 }
 
-index_into_irrf_vector :: #force_inline proc "contextless" (v: [3]i32) -> i32 {
+index_into_irrf_vector :: #force_inline proc(v: [3]i32) -> i32 {
+	assert(v.x >= 0 && v.x < IRRF_CHUNKS_PER_FILE_PER_XZ_DIR)
+	assert(v.y >= 0 && v.y < IRRF_CHUNKS_PER_FILE_PER_Y_DIR)
+	assert(v.z >= 0 && v.z < IRRF_CHUNKS_PER_FILE_PER_XZ_DIR)
 	return(
 		v.x * IRRF_CHUNKS_PER_FILE_PER_XZ_DIR * IRRF_CHUNKS_PER_FILE_PER_Y_DIR +
 		v.y * IRRF_CHUNKS_PER_FILE_PER_XZ_DIR +
@@ -54,13 +65,14 @@ IRRF_CHUNK_DATA :: struct {
 InMemoryIRRF :: struct {
 	data:        [IRRF_CHUNKS_PER_FILE]IRRF_CHUNK_DATA,
 	initialized: [IRRF_CHUNKS_PER_FILE]bool,
+	header:      IrrfDiskHeader,
 	mutex:       sync.RW_Mutex,
 	path:        string,
 	handle:      ^os.File,
 }
 IRRF_HEADER_SIZE :: size_of(bool) * IRRF_CHUNKS_PER_FILE
 
-MAX_IRRFS_IN_MEMORY := CHUNKS_PER_XZ_DIRECTION * CHUNKS_PER_XZ_DIRECTION
+MAX_IRRFS_IN_MEMORY := 36
 IRRFCacheMutex: sync.RW_Mutex
 IRRFCache: lru.Cache([3]i32, InMemoryIRRF)
 
@@ -72,9 +84,9 @@ chunk_pos_to_irrf_pos :: proc "contextless" (pos: [3]i32) -> [3]i32 {
 	regionY: i32 : CHUNK_STRIDE_Y * IRRF_CHUNKS_PER_FILE_PER_Y_DIR
 
 	posRounded := [3]i32 {
-		math.floor_div(pos.x, regionXZ),
-		math.floor_div(pos.y, regionY),
-		math.floor_div(pos.z, regionXZ),
+		math.floor_div(pos.x, regionXZ) * regionXZ,
+		math.floor_div(pos.y, regionY) * regionY,
+		math.floor_div(pos.z, regionXZ) * regionXZ,
 	}
 
 	return posRounded
@@ -89,8 +101,18 @@ irrf_pos_to_file_path :: proc(irrfPos: [3]i32) -> string {
 	ensure(err == nil)
 	return path
 }
-IrrfChunkDiskHeader:: struct{
-	type :
+IrrfDiskHeader :: struct {
+	chunksIs16:           [IRRF_CHUNKS_PER_FILE_PER_XZ_DIR *
+	IRRF_CHUNKS_PER_FILE_PER_Y_DIR *
+	IRRF_CHUNKS_PER_FILE_PER_XZ_DIR]bool,
+	pointTypeTranslation: [IRRF_CHUNKS_PER_FILE_PER_XZ_DIR *
+	IRRF_CHUNKS_PER_FILE_PER_Y_DIR *
+	IRRF_CHUNKS_PER_FILE_PER_XZ_DIR]IrrfChunkHeader,
+}
+
+IrrfChunkHeader :: [max(u8)]struct {
+	realPointType: u16,
+	total:         uint,
 }
 irrf_init_chunk :: proc(
 	pos: [3]i32,
@@ -108,7 +130,6 @@ irrf_init_chunk :: proc(
 	irrfFile: ^InMemoryIRRF
 	inCache: bool
 	irrfPos := chunk_pos_to_irrf_pos(pos)
-
 	{
 		sync.lock(&IRRFCacheMutex)
 		defer sync.unlock(&IRRFCacheMutex)
@@ -128,12 +149,19 @@ irrf_init_chunk :: proc(
 				if os.exists(irrfFile.path) {
 					irrfFile.handle, osErr = os.open(irrfFile.path, {.Read, .Write})
 					ensure(osErr == nil, "could not open irrf file")
+					_, osErr = os.seek(irrfFile.handle, 0, .Start)
+					ensure(osErr == nil, os.error_string(osErr))
+
+
 				} else {
 					osErr = os.mkdir_all(filepath.dir(irrfFile.path))
 					if osErr != .Exist do ensure(osErr == nil)
 					irrfFile.handle, osErr = os.create(irrfFile.path)
 
-					ensure(osErr == nil)
+					ensure(osErr == nil, os.error_string(osErr))
+					_, err := os.seek(irrfFile.handle, 0, .Start)
+					ensure(osErr == nil, os.error_string(err))
+
 				}
 
 			}
@@ -151,9 +179,16 @@ irrf_init_chunk :: proc(
 		sync.lock(&irrfFile.mutex)
 		defer sync.unlock(&irrfFile.mutex)
 
-		localPos := (pos - irrfPos) / CHUNK_STRIDE_XZ
+
+		nextIdx := 0
+		assert(irrfPos.x <= pos.x)
+		assert(irrfPos.y <= pos.y)
+		assert(irrfPos.z <= pos.z)
+
+		localPos := (pos - irrfPos) / [3]i32{CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
 		indexIntoIrrfScalar := index_into_irrf(localPos)
 		assert(indexIntoIrrfScalar >= 0)
+
 
 		irrfFile.data[indexIntoIrrfScalar].points = points^
 		irrfFile.data[indexIntoIrrfScalar].heightmap = heightmap^
@@ -191,83 +226,83 @@ irrf_get_chunk :: proc(
 ) -> (
 	wasInCache: bool,
 ) {
-	unreachable()
 	// tracy.Zone()
 
-	// assert(pos[0] % CHUNK_STRIDE_XZ == 0)
-	// assert(pos[1] % CHUNK_STRIDE_XZ == 0)
+	assert(pos.x % CHUNK_STRIDE_XZ == 0)
+	assert(pos.y % CHUNK_STRIDE_Y == 0)
+	assert(pos.z % CHUNK_STRIDE_XZ == 0)
 
 
-	// irrfFile: ^InMemoryIRRF
-	// inCache: bool
-	// irrfPos := chunk_pos_to_irrf_pos(pos)
+	irrfFile: ^InMemoryIRRF
+	inCache: bool
+	irrfPos := chunk_pos_to_irrf_pos(pos)
 
 
-	// {
-	// 	sync.shared_lock(&IRRFCacheMutex)
-	// 	irrfFile, inCache = lru.get_ptr(&IRRFCache, irrfPos)
-	// 	sync.shared_unlock(&IRRFCacheMutex)
+	{
+		sync.shared_lock(&IRRFCacheMutex)
+		irrfFile, inCache = lru.get_ptr(&IRRFCache, irrfPos)
+		sync.shared_unlock(&IRRFCacheMutex)
 
-	// 	if !inCache {
-	// 		irrfFilePath := irrf_pos_to_file_path(irrfPos)
-	// 		if !os.exists(irrfFilePath) {
-	// 			return false
-	// 		}
-	// 		sync.lock(&IRRFCacheMutex)
-	// 		defer sync.unlock(&IRRFCacheMutex)
-	// 		lru.set(&IRRFCache, irrfPos, InMemoryIRRF{})
-	// 		irrfFile, inCache = lru.get_ptr(&IRRFCache, irrfPos)
-	// 		assert(inCache)
-
-
-	// 		osErr: os.Error
-	// 		{
-	// 			sync.lock(&irrfFile.mutex)
-	// 			defer sync.unlock(&irrfFile.mutex)
-
-	// 			irrfFile.handle, osErr = os.open(irrfFilePath, {.Read, .Write})
-	// 			ensure(osErr == nil)
-	// 			irrfFile.path = irrfFilePath
+		if !inCache {
+			irrfFilePath := irrf_pos_to_file_path(irrfPos)
+			if !os.exists(irrfFilePath) {
+				return false
+			}
+			sync.lock(&IRRFCacheMutex)
+			defer sync.unlock(&IRRFCacheMutex)
+			lru.set(&IRRFCache, irrfPos, InMemoryIRRF{})
+			irrfFile, inCache = lru.get_ptr(&IRRFCache, irrfPos)
+			assert(inCache)
 
 
-	// 			_, osErr = os.read_at(
-	// 				irrfFile.handle,
-	// 				mem.slice_to_bytes(irrfFile.initialized[:]),
-	// 				0,
-	// 			)
-	// 			ensure(osErr == nil)
+			osErr: os.Error
+			{
+				sync.lock(&irrfFile.mutex)
+				defer sync.unlock(&irrfFile.mutex)
 
-	// 			irrf_decompress_to_buffer(irrfFile.handle, mem.slice_to_bytes(irrfFile.data[:]))
-	// 			// defer delete(compressed, context.temp_allocator)
-
-	// 		}
-
-	// 	}
-	// }
+				irrfFile.handle, osErr = os.open(irrfFilePath, {.Read, .Write})
+				ensure(osErr == nil)
+				irrfFile.path = irrfFilePath
 
 
-	// assert(inCache)
-	// assert(irrfFile != nil)
-	// assert(irrfFile.path != "")
+				_, osErr = os.read_at(
+					irrfFile.handle,
+					mem.slice_to_bytes(irrfFile.initialized[:]),
+					0,
+				)
+				ensure(osErr == nil)
 
-	// localPos := (pos - irrfPos) / CHUNK_STRIDE_XZ
-	// indexIntoIrrfScalar := index_into_irrf(localPos)
+				irrf_decompress_to_buffer(irrfFile.handle, mem.slice_to_bytes(irrfFile.data[:]))
+				// defer delete(compressed, context.temp_allocator)
 
-	// {
-	// 	sync.shared_lock(&irrfFile.mutex)
-	// 	defer sync.shared_unlock(&irrfFile.mutex)
-	// 	if irrfFile.initialized[indexIntoIrrfScalar] == false do return false
+			}
 
-	// 	points^ = irrfFile.data[indexIntoIrrfScalar].points
-	// 	heightmap^ = irrfFile.data[indexIntoIrrfScalar].heightmap
+		}
+	}
 
-	// }
 
-	// return true
+	assert(inCache)
+	assert(irrfFile != nil)
+	assert(irrfFile.path != "")
+
+	localPos := (pos - irrfPos) / [3]i32{CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
+	indexIntoIrrfScalar := index_into_irrf(localPos)
+
+	{
+		sync.shared_lock(&irrfFile.mutex)
+		defer sync.shared_unlock(&irrfFile.mutex)
+		if irrfFile.initialized[indexIntoIrrfScalar] == false do return false
+
+		points^ = irrfFile.data[indexIntoIrrfScalar].points
+		heightmap^ = irrfFile.data[indexIntoIrrfScalar].heightmap
+
+	}
+
+	return true
 }
 
 
-irrf_cache_on_remove :: proc(key: [2]i32, value: InMemoryIRRF, user_data: rawptr) {
+irrf_cache_on_remove :: proc(key: [3]i32, value: InMemoryIRRF, user_data: rawptr) {
 	os.close(value.handle)
 }
 irrf_compress_to_file :: proc(handle: ^os.File, data: []byte) {

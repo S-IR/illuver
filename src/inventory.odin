@@ -93,7 +93,7 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 			if spell.count == INVENTORY_SLOT_MAX_COUNT {
 				continue
 			} else {
-				// spell.count += 1
+				spell.count += 1
 				return true
 			}
 		}
@@ -110,7 +110,7 @@ inventory_add_item :: proc(inventory: ^Inventory, point: PointType) -> (hasEnoug
 			if b.count == INVENTORY_SLOT_MAX_COUNT {
 				continue
 			} else {
-				// b.count += 1
+				b.count += 1
 				return true
 			}
 		}

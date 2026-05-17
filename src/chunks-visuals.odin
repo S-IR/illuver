@@ -281,8 +281,8 @@ chunk_init :: proc(chunk: ^Chunk, pos: [3]i32, state: ^ChunkWorkerState) {
 
 		posXF64 := f64(pos.x)
 		posZF64 := f64(pos.z)
-		chunkXYZ := float3{f32(pos[0]), f32(pos[1]), f32(pos[2])}
-		chunkXYZI32 := [3]i32{i32(pos[0]), i32(pos[1]), i32(pos[2])}
+		chunkXYZ := float3{f32(pos.x), f32(pos.y), f32(pos.z)}
+		chunkXYZI32 := [3]i32{i32(pos.x), i32(pos.y), i32(pos.z)}
 
 		BIOME_THRESHOLD :: 20
 		for x: i32 = 0; x < VERTS_PER_X_DIR; x += 1 {
