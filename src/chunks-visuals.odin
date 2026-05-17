@@ -581,26 +581,26 @@ chunks_draw :: proc(
 		)
 		vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
 
-		vk.CmdBindPipeline(cb, .GRAPHICS, pointPipeline.pipeline)
-		vk.CmdPushDescriptorSetKHR(
-			cb,
-			.GRAPHICS,
-			pointPipeline.layout,
-			0,
-			len(writes),
-			raw_data(writes[:]),
-		)
+		// vk.CmdBindPipeline(cb, .GRAPHICS, pointPipeline.pipeline)
+		// vk.CmdPushDescriptorSetKHR(
+		// 	cb,
+		// 	.GRAPHICS,
+		// 	pointPipeline.layout,
+		// 	0,
+		// 	len(writes),
+		// 	raw_data(writes[:]),
+		// )
 
-		pushPoint := u32(1)
-		vk.CmdPushConstants(
-			cb,
-			pointPipeline.layout,
-			{.VERTEX, .FRAGMENT},
-			0,
-			size_of(u32),
-			&pushPoint,
-		)
-		vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
+		// pushPoint := u32(1)
+		// vk.CmdPushConstants(
+		// 	cb,
+		// 	pointPipeline.layout,
+		// 	{.VERTEX, .FRAGMENT},
+		// 	0,
+		// 	size_of(u32),
+		// 	&pushPoint,
+		// )
+		// vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
 	}
 }
 chunks_draw_shadow :: proc(

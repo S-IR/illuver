@@ -67,77 +67,67 @@ float3 energyToColor(uint16_t p) {
 float3 baseColor(PointType type) {
   switch (type) {
   case PointType::YellowDirt:
-    return float3(159, 112, 75) / 255.0;
+    return float3(189.5, 131.2, 68.7) / 255.0;
   case PointType::PurpleGround:
-    return float3(36, 19, 97) / 255.0;
+    return float3(58.3, 22.7, 138.5) / 255.0;
   case PointType::LightPurpleGround:
-    return float3(141, 97, 237) / 255.0;
+    return float3(162.8, 88.4, 252.1) / 255.0;
   case PointType::BlueDiamond:
-    return float3(0, 236, 231) / 255.0;
+    return float3(18.4, 245.6, 238.2) / 255.0;
   case PointType::BlackCliff:
-    return float3(31, 22, 25) / 255.0;
+    return float3(38.5, 30.2, 46.8) / 255.0;
   case PointType::PinkTrunk:
-    return float3(229, 108, 125) / 255.0;
+    return float3(233.1, 98.7, 118.4) / 255.0;
   case PointType::WhiteTreeLeaf:
-    return float3(218, 189, 252) / 255.0;
+    return float3(225.3, 195.8, 252.4) / 255.0;
   case PointType::Water:
-    return float3(68, 131, 129) / 255.0;
+    return float3(48.2, 148.6, 189.3) / 255.0;
   case PointType::GlassGrass:
-    return float3(210, 195, 100) / 255.0;
+    return float3(218.4, 205.7, 72.3) / 255.0;
   case PointType::VoidLoam:
-    return float3(38, 28, 22) / 255.0;
+    return float3(72.6, 48.3, 32.8) / 255.0;
   case PointType::VeilStone:
-    return float3(90, 100, 130) / 255.0;
+    return float3(78.4, 95.7, 148.2) / 255.0;
   case PointType::AbyssStone:
-    return float3(22, 35, 30) / 255.0;
+    return float3(22.3, 52.8, 38.5) / 255.0;
   case PointType::SharditeMineral:
-    return float3(160, 220, 255) / 255.0;
+    return float3(138.6, 218.3, 255.0) / 255.0;
   case PointType::ColossalShard:
-    return float3(80, 160, 200) / 255.0;
+    return float3(55.4, 168.7, 225.3) / 255.0;
   case PointType::AshwoodTrunk:
-    return float3(70, 70, 75) / 255.0;
+    return float3(88.5, 78.2, 68.7) / 255.0;
   case PointType::AshwoodLeaf:
-    return float3(95, 105, 90) / 255.0;
+    return float3(112.3, 132.6, 85.4) / 255.0;
   case PointType::UmbraTrunk:
-    return float3(20, 15, 18) / 255.0;
+    return float3(32.4, 20.7, 28.3) / 255.0;
   case PointType::UmbraLeaf:
-    return float3(35, 25, 40) / 255.0;
+    return float3(58.6, 28.3, 68.7) / 255.0;
   case PointType::CrystalTrunk:
-    return float3(180, 140, 220) / 255.0;
+    return float3(198.4, 148.7, 238.3) / 255.0;
   case PointType::CrystalLeaf:
-    return float3(200, 240, 255) / 255.0;
-
+    return float3(182.5, 242.3, 252.7) / 255.0;
   case PointType::EnchantedSoil:
-    return float3(14, 23, 21) / 255.0;
-
+    return float3(48.3, 28.7, 92.4) / 255.0;
   case PointType::EnchantedPasture:
-    return float3(14, 23, 201) / 255.0;
-
+    return float3(65.4, 42.8, 215.6) / 255.0;
   case PointType::MagicAbsorbingRock:
-    return float3(230, 162, 198) / 255.0;
-
+    return float3(215.3, 135.6, 188.4) / 255.0;
   case PointType::PulsingStone:
-    return float3(48, 25, 52) / 255.0;
-
+    return float3(188.7, 38.4, 205.3) / 255.0;
   case PointType::Peakor:
-    return float3(187, 82, 11) / 255.0;
-
+    return float3(178.4, 152.7, 118.3) / 255.0;
   case PointType::MawbeakRock:
-    return float3(39, 41, 47) / 255.0;
-
-  case PointType::Gorgveil:
-    return float3(181, 103, 52) / 255.0;
-  case PointType::AstanaiGrass:
-    return float3(72, 84, 23) / 255.0;
+    return float3(92.6, 82.3, 95.7) / 255.0;
   case PointType::AvigniSoil:
-    return float3(109, 38, 30) / 255.0;
-
+    return float3(125.4, 48.7, 35.3) / 255.0;
+  case PointType::Gorgveil:
+    return float3(158.3, 92.6, 42.4) / 255.0;
+  case PointType::AstanaiGrass:
+    return float3(82.4, 152.7, 38.3) / 255.0;
   case PointType::Canyonite:
-    return float3(195, 142, 82) / 255.0;
-
+    return float3(202.6, 148.3, 68.7) / 255.0;
   case PointType::Avrasar:
-    return float3(49, 36, 26) / 255.0;
-
+    return float3(118.4, 62.7, 35.3) / 255.0;
   default:
     return float3(0.0);
   }

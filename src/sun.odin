@@ -4,6 +4,7 @@ import "core:flags"
 import "core:fmt"
 import "core:math"
 import "core:mem"
+import "gs"
 import vk "vendor:vulkan"
 import "vkh"
 
@@ -456,6 +457,12 @@ sun_ubo_update :: proc(ubo: ^SunUBO, time: f64, cameraPos: [3]f32) {
 		1.5 * angleNormalized + 0.05,
 	}
 	ubo.lightVP = compute_light_vp(ubo.worldPos.xyz, cameraPos)
+	gs.clearColor = {
+		angleNormalized * 0.25,
+		angleNormalized * 0.40,
+		0.08 + angleNormalized * 0.52,
+		1,
+	}
 
 
 }

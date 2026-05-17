@@ -659,7 +659,7 @@ vk_begin_frame :: proc(cb: vk.CommandBuffer) -> (skip: bool) {
 				imageLayout = .ATTACHMENT_OPTIMAL,
 				loadOp = .CLEAR,
 				storeOp = .STORE,
-				clearValue = {color = {float32 = {0.2, 0.4, 0.6, 1}}},
+				clearValue = {color = {float32 = gs.clearColor}},
 			},
 			pDepthAttachment = &vk.RenderingAttachmentInfo {
 				sType = .RENDERING_ATTACHMENT_INFO,

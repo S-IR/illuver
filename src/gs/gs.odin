@@ -11,6 +11,7 @@ window: ^sdl.Window
 
 dt: f64
 totalTime: f64 = 0
+clearColor: [4]f32 = {0.02, 0.03, 0.08, 1}
 
 
 nearPlane: f32 : 0.1

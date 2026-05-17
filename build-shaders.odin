@@ -10,7 +10,7 @@ SPIRV :: true
 PRINT_COMMAND :: true
 
 main :: proc() {
-	inputDir, _ := filepath.join({"src", "glsl"}, context.temp_allocator)
+	inputDir, _ := filepath.join({"src", "slang"}, context.temp_allocator)
 	outputDir, _ := filepath.join({"./build", "shader-binaries"}, context.temp_allocator)
 
 	cwd, err := os.get_executable_directory(context.temp_allocator)

@@ -336,17 +336,9 @@ vulkan_init :: proc() {
 
 		preferredFormat := surfaceFormats[0]
 		for f in surfaceFormats {
-			if (f.format == .A2B10G10R10_UNORM_PACK32 || f.format == .A2B10G10R10_SINT_PACK32) &&
-			   f.colorSpace == .HDR10_ST2084_EXT {
-				preferredFormat = f
-				break
-			}
-			if f.format == .B10G11R11_UFLOAT_PACK32 || f.format == .R16G16B16A16_SFLOAT {
-				preferredFormat = f
-				break
-			}
 			if f.format == .B8G8R8A8_SRGB && f.colorSpace == .SRGB_NONLINEAR {
 				preferredFormat = f
+				break
 			}
 		}
 

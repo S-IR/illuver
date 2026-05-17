@@ -44,7 +44,12 @@ VertexOutput vertexMain(VertexInput input) {
   output.worldPos = input.position;
   float4 viewPos = mul(view, float4(input.position, 1.0));
   output.position = mul(proj, viewPos);
-  output.color = pointFinalColor(uint16_t(input.pointVal));
+  float4 baseCol = pointFinalColor(uint16_t(input.pointVal));
+  int3 voxelPos = int3(round(input.position));
+  uint h = uint(voxelPos.x) * 0x9e3779b9u ^ uint(voxelPos.y) * 0x85ebca6bu ^ uint(voxelPos.z) * 0xd2a98b26u;
+  h = (h ^ (h >> 16)) * 0x45d9f3bu;
+  float var = float(h & 0xFFu) / 255.0 * 0.14 - 0.07;
+  output.color = float4(clamp(baseCol.rgb * (1.0 + var), 0.0, 1.0), 1.0);
   output.normal = input.normal;
 
   output.shadowCoord = mul(lightVP, float4(input.position, 1.0));
@@ -62,8 +67,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
 
   float3 surfaceColor = input.color.xyz;
 
-  float sunAmbientStr = 0.15;
-  float3 ambient = sunAmbientStr * surfaceColor;
+  float sunAmbientStr = 0.22;
+  float3 ambient = sunAmbientStr * surfaceColor * float3(0.75, 0.88, 1.0);
 
   // diffuse
   float3 lightVec = sunWorldPos.xyz - input.worldPos;
@@ -84,10 +89,14 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   float spec = 0.0;
   if (diff > 0.0) {
     float3 halfwayDir = normalize(lightDir + viewDir);
-    float sunSpecularStr = 0.12;
+    float sunSpecularStr = 48.0;
     spec = pow(max(dot(normal, halfwayDir), 0.0), sunSpecularStr);
   }
   float3 specular = spec * 0.3 * sunColor.xyz * attenuation;
 
-  return float4(ambient + shadow * (diffuse + specular), 1.0);
+  float3 hdrColor = ambient + shadow * (diffuse + specular);
+  // ACES filmic tonemapping
+  float3 x = hdrColor;
+  float3 mapped = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+  return float4(mapped, 1.0);
 }
