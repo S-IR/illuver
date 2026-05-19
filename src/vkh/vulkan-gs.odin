@@ -845,6 +845,7 @@ vulkan_update_swapchain :: proc() {
 
 	vk.DestroyImageView(device, depthImageView, nil)
 	vma.destroy_image(allocator, depthImage, vmaDepthStencilAlloc)
+	wbiot_destroy()
 
 	depthImageCI := vk.ImageCreateInfo {
 		sType = .IMAGE_CREATE_INFO,
@@ -884,6 +885,7 @@ vulkan_update_swapchain :: proc() {
 		},
 	}
 	chk(vk.CreateImageView(device, &depthViewCI, nil, &depthImageView))
+	wbiot_textures_init()
 
 	frameIndex = 0
 }

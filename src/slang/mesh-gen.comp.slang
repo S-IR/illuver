@@ -77,8 +77,11 @@ static const int3 neighborOffsets[26] = {
 
 bool isSurrounded(int3 cell) {
   for (int i = 0; i < 26; i++) {
-    if (getPointType(getPoint(cell + neighborOffsets[i])) == PointType::Air)
-      return false;
+    PointType pt = getPointType(getPoint(cell + neighborOffsets[i]));
+    if (isTransparentPoint(pt))
+        return false;
+    if (pt == PointType::Air)
+        return false;
   }
   return true;
 }

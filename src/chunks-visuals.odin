@@ -476,8 +476,6 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 
 PointPushConstants :: struct {
 	isPointPass: u32,
-	nearPlane:   f32,
-	farPlane:    f32,
 }
 
 chunks_draw :: proc(
@@ -571,8 +569,6 @@ chunks_draw :: proc(
 		)
 		pushTri := PointPushConstants {
 			isPointPass = 0,
-			nearPlane   = gs.nearPlane,
-			farPlane    = gs.farPlane,
 		}
 		vk.CmdPushConstants(
 			cb,
@@ -717,11 +713,11 @@ chunks_draw_transparent :: proc(
 		0,
 		1,
 		&vk.Viewport {
-			width    = f32(gs.screenWidth),
-			height   = -f32(gs.screenHeight),
+			width = f32(gs.screenWidth),
+			height = -f32(gs.screenHeight),
 			minDepth = 0,
 			maxDepth = 1,
-			y        = f32(gs.screenHeight),
+			y = f32(gs.screenHeight),
 		},
 	)
 	vk.CmdSetScissor(
@@ -738,7 +734,7 @@ chunks_draw_transparent :: proc(
 		pBufferInfo     = &vk.DescriptorBufferInfo {
 			buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
 			offset = 0,
-			range  = vkh.CameraUBOSize,
+			range = vkh.CameraUBOSize,
 		},
 	}
 	push := OitPushConstants {

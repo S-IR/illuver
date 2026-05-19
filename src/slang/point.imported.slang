@@ -81,7 +81,7 @@ float3 baseColor(PointType type) {
   case PointType::WhiteTreeLeaf:
     return float3(225.3, 195.8, 252.4) / 255.0;
   case PointType::Water:
-    return float3(48.2, 148.6, 189.3) / 255.0;
+    return float3(0,0,0) / 255.0;
   case PointType::GlassGrass:
     return float3(218.4, 205.7, 72.3) / 255.0;
   case PointType::VoidLoam:
@@ -145,6 +145,6 @@ export float4 pointFinalColor(uint16_t point) {
   float3 base = baseColor(getPointType(point));
   float3 energy = energyToColor(point);
   float3 combined = base * 0.9 + energy * 0.1;
-  float alpha = (getPointType(point) == PointType::Water) ?  1.0: 1.0;
+  float alpha = (getPointType(point) == PointType::Water) ?  0.7: 1.0;
   return float4(combined, alpha);
 }

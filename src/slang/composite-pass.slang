@@ -9,7 +9,7 @@ VSOut vertexMain(uint vid : SV_VertexID) {
     float2 uv = float2((vid << 1) & 2, vid & 2);
     VSOut o;
     o.pos = float4(uv * 2.0 - 1.0, 0.0, 1.0);
-    o.uv = uv;
+    o.uv = float2(uv.x, 1.0 - uv.y);
     return o;
 }
 
