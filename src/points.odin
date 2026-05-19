@@ -141,7 +141,6 @@ point_pipeline_init :: proc(
 ) -> (
 	triPipeline: vkh.PipelineData,
 	pointPipeline: vkh.PipelineData,
-	triTransparentPipeline: vkh.PipelineData,
 ) {
 	pushRange := vk.PushConstantRange {
 		stageFlags = {.VERTEX, .FRAGMENT},
@@ -310,49 +309,7 @@ point_pipeline_init :: proc(
 		vk.CreateGraphicsPipelines(vkh.device, {}, 1, &createInfo, nil, &pointPipeline.pipeline),
 	)
 
-	transparentDepthState := vk.PipelineDepthStencilStateCreateInfo {
-		sType            = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-		depthTestEnable  = true,
-		depthWriteEnable = false,
-		depthCompareOp   = .LESS,
-	}
-	transparentBlendAttachment := vk.PipelineColorBlendAttachmentState {
-		blendEnable         = true,
-		srcColorBlendFactor = .SRC_ALPHA,
-		dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA,
-		colorBlendOp        = .ADD,
-		srcAlphaBlendFactor = .ONE,
-		dstAlphaBlendFactor = .ZERO,
-		alphaBlendOp        = .ADD,
-		colorWriteMask      = {.R, .G, .B, .A},
-	}
-	waterBlendState := vk.PipelineColorBlendStateCreateInfo {
-		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-		attachmentCount = 1,
-		pAttachments    = &transparentBlendAttachment,
-	}
-	createInfo.pDepthStencilState = &transparentDepthState
-	createInfo.pColorBlendState = &waterBlendState
-
-	createInfo.pRasterizationState = &vk.PipelineRasterizationStateCreateInfo {
-		sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		lineWidth = 1.0,
-		cullMode = {.BACK},
-		frontFace = .COUNTER_CLOCKWISE,
-	}
-	triTransparentPipeline.layout = triPipeline.layout
-	triTransparentPipeline.descriptorSetLayout = triPipeline.descriptorSetLayout
-	vkh.chk(
-		vk.CreateGraphicsPipelines(
-			vkh.device,
-			{},
-			1,
-			&createInfo,
-			nil,
-			&triTransparentPipeline.pipeline,
-		),
-	)
-	return triPipeline, pointPipeline, triTransparentPipeline
+	return triPipeline, pointPipeline
 }
 
 // is_point_visible :: proc(chunk: ^Chunk, x, y, z: int) -> bool {

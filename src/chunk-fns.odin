@@ -47,8 +47,7 @@ CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 CHUNK_HEIGHTMAP_SIZE :: VERTS_PER_X_DIR * VERTS_PER_Z_DIR
 NUM_WORKER_THREADS := 4
 MAX_OPAQUE_VERTS :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
-MAX_TRANSPARENT_VERTS :: MAX_OPAQUE_VERTS
-VERTEX_BUFFER_SIZE :: (MAX_OPAQUE_VERTS + MAX_TRANSPARENT_VERTS) * size_of(PointVertexInput)
+VERTEX_BUFFER_SIZE :: MAX_OPAQUE_VERTS * size_of(PointVertexInput)
 
 Chunk :: struct {
 	points:                                    [VERTS_PER_X_DIR *
@@ -68,8 +67,7 @@ Chunk :: struct {
 	pos:                                       [3]i32,
 	pendingUpload:                             [vkh.MAX_FRAMES_IN_FLIGHT]b32,
 	mutex:                                     sync.RW_Mutex,
-	totalOpaquePoints,
-	totalTransparentPoints: u32,
+	totalOpaquePoints: u32,
 	arena:                                     virtual.Arena,
 	alloc:                                     mem.Allocator,
 	dirty:                                     bool,

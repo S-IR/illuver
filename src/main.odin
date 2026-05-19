@@ -174,14 +174,13 @@ main :: proc() {
 	when ODIN_DEBUG do defer chunks_destroy()
 
 
-	pointTrianglePipeline, pointDotPipeline, triTransparentPipeline := point_pipeline_init()
+	pointTrianglePipeline, pointDotPipeline := point_pipeline_init()
 	when ODIN_DEBUG {
 		defer {
 			if pointTrianglePipeline.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkh.device, pointTrianglePipeline.descriptorSetLayout, nil)
 			if pointTrianglePipeline.layout != {} do vk.DestroyPipelineLayout(vkh.device, pointTrianglePipeline.layout, nil)
 			if pointTrianglePipeline.pipeline != {} do vk.DestroyPipeline(vkh.device, pointTrianglePipeline.pipeline, nil)
 			if pointDotPipeline.pipeline != {} do vk.DestroyPipeline(vkh.device, pointDotPipeline.pipeline, nil)
-			if triTransparentPipeline.pipeline != {} do vk.DestroyPipeline(vkh.device, triTransparentPipeline.pipeline, nil)
 		}
 
 	}
@@ -433,7 +432,6 @@ main :: proc() {
 				{
 					highlightSpere = &highlightSphere,
 					pointTrianglePipeline = pointTrianglePipeline,
-					triTransparentPipeline = triTransparentPipeline,
 					pointDotPipeline = pointDotPipeline,
 					uiPipeline = uiPipeline,
 					sun = &sunRenderData,
@@ -451,10 +449,10 @@ game_render :: proc(
 	mouseX, mouseY: f32,
 	leftClickIsHeldThisFrame, pressedRightClickThisFrame: bool,
 	renderData: struct #all_or_none {
-		highlightSpere:                                                  ^HighlightSphere,
-		pointTrianglePipeline, triTransparentPipeline, pointDotPipeline: vkh.PipelineData,
-		uiPipeline:                                                      vkh.PipelineData,
-		sun:                                                             ^SunRenderData,
+		highlightSpere:                         ^HighlightSphere,
+		pointTrianglePipeline, pointDotPipeline: vkh.PipelineData,
+		uiPipeline:                              vkh.PipelineData,
+		sun:                                     ^SunRenderData,
 	},
 ) {
 	assert(currCamera != nil)
@@ -584,7 +582,6 @@ game_render :: proc(
 	chunks_draw(
 		cb = cb,
 		triPipeline = renderData.pointTrianglePipeline,
-		triTransparentPipeline = renderData.triTransparentPipeline,
 		currCamera = currCamera^,
 		pointPipeline = renderData.pointDotPipeline,
 		sun = renderData.sun,

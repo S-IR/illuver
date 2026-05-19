@@ -468,7 +468,7 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 
 chunks_draw :: proc(
 	cb: vk.CommandBuffer,
-	triPipeline, triTransparentPipeline: vkh.PipelineData,
+	triPipeline: vkh.PipelineData,
 	pointPipeline: vkh.PipelineData,
 	currCamera: camera.Camera,
 	sun: ^SunRenderData,
@@ -566,71 +566,7 @@ chunks_draw :: proc(
 			&pushTri,
 		)
 		vk.CmdDraw(cb, chunk.totalOpaquePoints, 1, 0, 0)
-
-		// vk.CmdBindPipeline(cb, .GRAPHICS, pointPipeline.pipeline)
-		// vk.CmdPushDescriptorSetKHR(
-		// 	cb,
-		// 	.GRAPHICS,
-		// 	pointPipeline.layout,
-		// 	0,
-		// 	len(writes),
-		// 	raw_data(writes[:]),
-		// )
-
-		// pushPoint := u32(1)
-		// vk.CmdPushConstants(
-		// 	cb,
-		// 	pointPipeline.layout,
-		// 	{.VERTEX, .FRAGMENT},
-		// 	0,
-		// 	size_of(u32),
-		// 	&pushPoint,
-		// )
-		// vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
 	}
-
-	for chunk in renderedChunks {
-		if chunk.totalTransparentPoints == 0 do continue
-		if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
-
-		if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
-			waitInfo := vk.SemaphoreWaitInfo {
-				sType          = .SEMAPHORE_WAIT_INFO,
-				semaphoreCount = 1,
-				pSemaphores    = &vkh.copyTimelineSemaphore,
-				pValues        = &chunk.copyTimelineValue[vkh.frameIndex],
-			}
-			vk.WaitSemaphores(vkh.device, &waitInfo, max(u64))
-			chunk.copyTimelineValue[vkh.frameIndex] = 0
-		}
-
-		transparentBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
-		vertexOffset := vk.DeviceSize(MAX_OPAQUE_VERTS * size_of(PointVertexInput))
-		vk.CmdBindVertexBuffers(cb, 0, 1, &transparentBuffer, &vertexOffset)
-
-		vk.CmdBindPipeline(cb, .GRAPHICS, triTransparentPipeline.pipeline)
-		vk.CmdPushDescriptorSetKHR(
-			cb,
-			.GRAPHICS,
-			triTransparentPipeline.layout,
-			0,
-			len(writes),
-			raw_data(writes[:]),
-		)
-
-		pushTri := u32(0)
-		vk.CmdPushConstants(
-			cb,
-			triTransparentPipeline.layout,
-			{.VERTEX, .FRAGMENT},
-			0,
-			size_of(u32),
-			&pushTri,
-		)
-		vk.CmdDraw(cb, chunk.totalTransparentPoints, 1, 0, 0)
-	}
-
-
 }
 chunks_draw_shadow :: proc(
 	cb: vk.CommandBuffer,
@@ -744,6 +680,5 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 	free_all(chunk.alloc)
 	chunk.pos = {}
 	chunk.totalOpaquePoints = 0
-	chunk.totalTransparentPoints = 0
 
 }

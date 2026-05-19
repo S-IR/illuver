@@ -23,8 +23,6 @@ static const int VERT_STRIDE_X = VERTS_PER_Z_DIR * VERTS_PER_Y_DIR;
 static const int VERT_STRIDE_Y = VERTS_PER_Z_DIR;
 
 static const uint VERTEX_STRIDE = 32;
-static const uint MAX_OPAQUE_VERTS = uint(CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36);
-static const uint TRANSPARENT_COUNTER_BYTE_OFFSET = 4;
 
 uint16_t getPoint(int3 cell) {
   if (cell.x < 0 || cell.x >= VERTS_PER_X_DIR)
@@ -80,11 +78,7 @@ static const int3 neighborOffsets[26] = {
 
 bool isSurrounded(int3 cell) {
   for (int i = 0; i < 26; i++) {
-    int3 neighbour = cell + neighborOffsets[i];
-    PointType neighbourPointType = getPointType(getPoint(neighbour));
-    if (neighbourPointType == PointType::Air)
-      return false;
-    if (isTransparentPoint(neighbourPointType))
+    if (getPointType(getPoint(cell + neighborOffsets[i])) == PointType::Air)
       return false;
   }
   return true;
@@ -114,23 +108,11 @@ void main(uint3 id: SV_DispatchThreadID) {
     uint16_t p1 = getPoint(cell + v1);
     uint16_t p2 = getPoint(cell + v2);
 
-    PointType p0pt = getPointType(p0);
-    PointType p1pt = getPointType(p1);
-    PointType p2pt = getPointType(p2);
-
-    if (p0pt == PointType::Air || p1pt == PointType::Air || p2pt == PointType::Air)
+    if (getPointType(p0) == PointType::Air || getPointType(p1) == PointType::Air || getPointType(p2) == PointType::Air)
       continue;
 
-    // bool isTransparent = isTransparentPoint(p0pt) || isTransparentPoint(p1pt) || isTransparentPoint(p2pt);
-    bool isTransparent = false;
-
     uint vIdx;
-    if (!isTransparent) {
-      counter.InterlockedAdd(0, 6, vIdx);
-    } else {
-      counter.InterlockedAdd(TRANSPARENT_COUNTER_BYTE_OFFSET, 6, vIdx);
-      vIdx += MAX_OPAQUE_VERTS;
-    }
+    counter.InterlockedAdd(0, 6, vIdx);
 
     float3 pos0 = worldPosition(cell + v0);
     float3 pos1 = worldPosition(cell + v1);
