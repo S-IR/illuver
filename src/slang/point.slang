@@ -57,7 +57,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
     return float4(0.0, 0.0, 0.0, 1.0);
   }
   float3 fragViewPos = mul(view, float4(input.worldPos, 1.0)).xyz;
-  float depthVS = -fragViewPos.z;
+  float depthVS = fragViewPos.z;
   int cascade = 3;
   if      (depthVS < cascadeSplits.x) cascade = 0;
   else if (depthVS < cascadeSplits.y) cascade = 1;

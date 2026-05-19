@@ -246,16 +246,17 @@ vulkan_init :: proc() {
 			scalarBlockLayout                         = true,
 		}
 
-		storage16Features := vk.PhysicalDevice16BitStorageFeatures {
-			sType                              = .PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+		enabledVk11Features := vk.PhysicalDeviceVulkan11Features {
+			sType                              = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+			pNext                              = &enabledVk12Features,
 			storageBuffer16BitAccess           = true,
 			uniformAndStorageBuffer16BitAccess = true,
+			shaderDrawParameters               = true,
 		}
-		storage16Features.pNext = &enabledVk12Features
 
 		enabledVk13Features := vk.PhysicalDeviceVulkan13Features {
 			sType                          = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-			pNext                          = &storage16Features,
+			pNext                          = &enabledVk11Features,
 			shaderDemoteToHelperInvocation = true,
 			synchronization2               = true,
 			dynamicRendering               = true,
@@ -267,6 +268,7 @@ vulkan_init :: proc() {
 			geometryShader    = true,
 			shaderInt16       = true,
 			fillModeNonSolid  = true,
+			independentBlend  = true,
 		}
 		deviceExtensions := [?]cstring {
 			vk.KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -648,6 +650,7 @@ vulkan_init :: proc() {
 	}
 
 	for i in cameraBuffers do ensure(i.alloc != {})
+	wbiot_textures_init()
 
 
 }
@@ -695,7 +698,7 @@ vulkan_cleanup :: proc() {
 	if depthImageView != {} do vk.DestroyImageView(device, depthImageView, nil)
 
 	if depthImage != {} do vma.destroy_image(allocator, depthImage, vmaDepthStencilAlloc)
-
+	wbiot_destroy()
 
 	for view in swpachainImageViews {
 		if view != {} do vk.DestroyImageView(device, view, nil)
@@ -726,7 +729,6 @@ vulkan_cleanup :: proc() {
 	if device != {} do vk.DestroyDevice(device, nil)
 
 	if instance != {} do vk.DestroyInstance(instance, nil)
-
 
 }
 vulkan_update_swapchain :: proc() {

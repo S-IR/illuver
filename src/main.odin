@@ -175,16 +175,18 @@ main :: proc() {
 
 
 	pointTrianglePipeline, pointDotPipeline := point_pipeline_init()
+
 	when ODIN_DEBUG {
 		defer {
 			if pointTrianglePipeline.descriptorSetLayout != {} do vk.DestroyDescriptorSetLayout(vkh.device, pointTrianglePipeline.descriptorSetLayout, nil)
 			if pointTrianglePipeline.layout != {} do vk.DestroyPipelineLayout(vkh.device, pointTrianglePipeline.layout, nil)
 			if pointTrianglePipeline.pipeline != {} do vk.DestroyPipeline(vkh.device, pointTrianglePipeline.pipeline, nil)
 			if pointDotPipeline.pipeline != {} do vk.DestroyPipeline(vkh.device, pointDotPipeline.pipeline, nil)
+
 		}
-
 	}
-
+	oitPipeline, compositePipeline := oit_pipelines_init()
+	when ODIN_DEBUG do defer oit_pipelines_destroy(oitPipeline, compositePipeline)
 
 	chunkGeometryCalcPipeline = chunk_geometry_calc_pipeline_init()
 	when ODIN_DEBUG do defer vkh.pipeline_destroy(chunkGeometryCalcPipeline)
@@ -435,6 +437,8 @@ main :: proc() {
 					pointDotPipeline = pointDotPipeline,
 					uiPipeline = uiPipeline,
 					sun = &sunRenderData,
+					oitPipeline = oitPipeline,
+					compositePipeline = compositePipeline,
 				},
 			)
 
@@ -449,10 +453,11 @@ game_render :: proc(
 	mouseX, mouseY: f32,
 	leftClickIsHeldThisFrame, pressedRightClickThisFrame: bool,
 	renderData: struct #all_or_none {
-		highlightSpere:                         ^HighlightSphere,
+		highlightSpere:                          ^HighlightSphere,
 		pointTrianglePipeline, pointDotPipeline: vkh.PipelineData,
 		uiPipeline:                              vkh.PipelineData,
 		sun:                                     ^SunRenderData,
+		oitPipeline, compositePipeline:          vkh.PipelineData,
 	},
 ) {
 	assert(currCamera != nil)
@@ -566,7 +571,7 @@ game_render :: proc(
 	vk_start_frame_commands(cb)
 	shadow_pass(cb = cb, data = renderData.sun)
 
-	if vk_begin_frame(cb) do return
+	if vk_begin_game_frame(cb) do return
 	if raycastDidHappen && !leftClickIsHeldThisFrame {
 		highlight_sphere_draw(
 			cb,
@@ -587,6 +592,35 @@ game_render :: proc(
 		sun = renderData.sun,
 	)
 
+	chunks_draw_transparent(cb, renderData.oitPipeline, currCamera^, renderData.sun)
+
+	vk.CmdEndRendering(cb)
+	oit_end(cb)
+
+	vk.CmdBeginRendering(
+		cb,
+		&vk.RenderingInfo {
+			sType = .RENDERING_INFO,
+			renderArea = {extent = vkh.swapchainExtent},
+			layerCount = 1,
+			colorAttachmentCount = 1,
+			pColorAttachments = &vk.RenderingAttachmentInfo {
+				sType = .RENDERING_ATTACHMENT_INFO,
+				imageView = vkh.swpachainImageViews[vkh.imageIndex],
+				imageLayout = .ATTACHMENT_OPTIMAL,
+				loadOp = .LOAD,
+				storeOp = .STORE,
+			},
+			pDepthAttachment = &vk.RenderingAttachmentInfo {
+				sType = .RENDERING_ATTACHMENT_INFO,
+				imageView = vkh.depthImageView,
+				imageLayout = .ATTACHMENT_OPTIMAL,
+				loadOp = .LOAD,
+				storeOp = .DONT_CARE,
+			},
+		},
+	)
+	composite_draw(cb, renderData.compositePipeline)
 
 	spellbar_render(inventory)
 	// ui.add_text("TAKING SOULS", font, 32, 20, 20, [4]f32{1, 1, 1, 1})
@@ -771,4 +805,116 @@ vk_end_frame :: proc(cb: ^vk.CommandBuffer) {
 	ui.frame_reset()
 	sync.mutex_unlock(&vkh.computeQueueMutex)
 
+}
+@(require_results)
+vk_begin_game_frame :: proc(cb: vk.CommandBuffer) -> (skip: bool) {
+	acquireResult := vk.AcquireNextImageKHR(
+		vkh.device,
+		vkh.swapchain,
+		1_000_000_000,
+		vkh.presentSemaphores[vkh.frameIndex],
+		{},
+		&vkh.imageIndex,
+	)
+	if acquireResult == .ERROR_OUT_OF_DATE_KHR || acquireResult == .TIMEOUT {
+		vkh.updateSwapchain = true
+		return true
+	}
+
+	barriers := [?]vk.ImageMemoryBarrier2 {
+		{
+			sType = .IMAGE_MEMORY_BARRIER_2,
+			srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
+			oldLayout = .UNDEFINED,
+			newLayout = .ATTACHMENT_OPTIMAL,
+			image = vkh.swapchainImages[vkh.imageIndex],
+			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
+		},
+		{
+			sType = .IMAGE_MEMORY_BARRIER_2,
+			srcStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+			dstStageMask = {.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+			dstAccessMask = {.DEPTH_STENCIL_ATTACHMENT_WRITE},
+			oldLayout = .UNDEFINED,
+			newLayout = .ATTACHMENT_OPTIMAL,
+			image = vkh.depthImage,
+			subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
+		},
+		{
+			sType = .IMAGE_MEMORY_BARRIER_2,
+			srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
+			oldLayout = .UNDEFINED,
+			newLayout = .ATTACHMENT_OPTIMAL,
+			image = vkh.wbAccum.image,
+			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
+		},
+		{
+			sType = .IMAGE_MEMORY_BARRIER_2,
+			srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+			dstAccessMask = {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
+			oldLayout = .UNDEFINED,
+			newLayout = .ATTACHMENT_OPTIMAL,
+			image = vkh.wbReveal.image,
+			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
+		},
+	}
+	vk.CmdPipelineBarrier2(
+		cb,
+		&{
+			sType = .DEPENDENCY_INFO,
+			imageMemoryBarrierCount = len(barriers),
+			pImageMemoryBarriers = raw_data(barriers[:]),
+		},
+	)
+
+	colorAttachments := [3]vk.RenderingAttachmentInfo {
+		{
+			sType = .RENDERING_ATTACHMENT_INFO,
+			imageView = vkh.swpachainImageViews[vkh.imageIndex],
+			imageLayout = .ATTACHMENT_OPTIMAL,
+			loadOp = .CLEAR,
+			storeOp = .STORE,
+			clearValue = {color = {float32 = gs.clearColor}},
+		},
+		{
+			sType = .RENDERING_ATTACHMENT_INFO,
+			imageView = vkh.wbAccumView,
+			imageLayout = .ATTACHMENT_OPTIMAL,
+			loadOp = .CLEAR,
+			storeOp = .STORE,
+			clearValue = {color = {float32 = {0, 0, 0, 0}}},
+		},
+		{
+			sType = .RENDERING_ATTACHMENT_INFO,
+			imageView = vkh.wbRevealView,
+			imageLayout = .ATTACHMENT_OPTIMAL,
+			loadOp = .CLEAR,
+			storeOp = .STORE,
+			clearValue = {color = {float32 = {1, 0, 0, 0}}},
+		},
+	}
+	vk.CmdBeginRendering(
+		cb,
+		&{
+			sType = .RENDERING_INFO,
+			renderArea = {extent = vkh.swapchainExtent},
+			layerCount = 1,
+			colorAttachmentCount = 3,
+			pColorAttachments = raw_data(colorAttachments[:]),
+			pDepthAttachment = &vk.RenderingAttachmentInfo {
+				sType = .RENDERING_ATTACHMENT_INFO,
+				imageView = vkh.depthImageView,
+				imageLayout = .ATTACHMENT_OPTIMAL,
+				loadOp = .CLEAR,
+				storeOp = .DONT_CARE,
+				clearValue = {depthStencil = {1, 0}},
+			},
+		},
+	)
+	return false
 }

@@ -23,49 +23,49 @@ biome_point_type :: #force_inline proc(
 ) {
 	// if diffY < 3 {
 	// heightMap[index_into_height_map(index.xz)] = worldXYZ.y + 1
-	points[index_into_point_arrays(index)] = u16(PointType.Water)
-	return
+	// points[index_into_point_arrays(index)] = u16(PointType.Water)
+	// return
 	// }
 
-	// if u16_to_point_type(points[index_into_point_arrays(index)]) != .Air {
-	// 	return
-	// }
-	// // points[index_into_point_arrays(index)] = u16(PointType.VeilStone)
-	// // return
-	// // fmt.println("worldXYZ", worldXYZ)
-	// switch biome {
-	// case .Crystalbloom:
-	// 	crystalbloom_point_type(points, heightMap, worldXYZ, index, topY, seed)
-	// 	return
-	// case .Gorglai:
-	// 	gorglai_point_type(points, worldXYZ, index, topY, seed)
-	// 	return
+	if u16_to_point_type(points[index_into_point_arrays(index)]) != .Air {
+		return
+	}
+	// points[index_into_point_arrays(index)] = u16(PointType.VeilStone)
+	// return
+	// fmt.println("worldXYZ", worldXYZ)
+	switch biome {
+	case .Crystalbloom:
+		crystalbloom_point_type(points, heightMap, worldXYZ, index, topY, seed)
+		return
+	case .Gorglai:
+		gorglai_point_type(points, worldXYZ, index, topY, seed)
+		return
 
-	// case .Arakholm:
-	// 	arakholm_point_type(points, worldXYZ, index, topY, seed)
-	// 	return
+	case .Arakholm:
+		arakholm_point_type(points, worldXYZ, index, topY, seed)
+		return
 
-	// case .Merplia:
-	// 	merplia_point_type(points, worldXYZ, index, topY, seed)
-	// 	return
+	case .Merplia:
+		merplia_point_type(points, worldXYZ, index, topY, seed)
+		return
 
-	// case .Wintercrown:
-	// 	wintercrown_point_type(points, worldXYZ, index, topY, seed)
-	// 	return
+	case .Wintercrown:
+		wintercrown_point_type(points, worldXYZ, index, topY, seed)
+		return
 
-	// case .Scholathorn:
-	// 	scholathorn_point_type(points, worldXYZ, index, topY, seed)
-	// 	return
+	case .Scholathorn:
+		scholathorn_point_type(points, worldXYZ, index, topY, seed)
+		return
 
-	// case .Adwaron:
-	// 	adwaron_point_type(points, worldXYZ, index, topY, seed)
-	// 	return
+	case .Adwaron:
+		adwaron_point_type(points, worldXYZ, index, topY, seed)
+		return
 
-	// case .Etherwind:
-	// 	etherwind_point_type(points, heightMap, worldXYZ, index, topY, seed)
-	// 	return
-	// }
-	// unreachable()
+	case .Etherwind:
+		etherwind_point_type(points, heightMap, worldXYZ, index, topY, seed)
+		return
+	}
+	unreachable()
 }
 
 crystalbloom_point_type :: proc(
@@ -83,11 +83,11 @@ crystalbloom_point_type :: proc(
 	diffY := topY - worldXYZ.y
 
 	WATER_LEVEL :: 0
-	if diffY < 3 {
-		// heightMap[index_into_height_map(index.xz)] = worldXYZ.y + 1
-		points[index_into_point_arrays(index)] = u16(PointType.Water)
-		return
-	}
+	// if diffY < 3 {
+	// 	// heightMap[index_into_height_map(index.xz)] = worldXYZ.y + 1
+	// 	points[index_into_point_arrays(index)] = u16(PointType.Water)
+	// 	return
+	// }
 	if diffY < CRYSTALBLOOM_LOAM_DEPTH {
 		GRASS_SCALE :: 0.02
 		fbmNoise := algorithms.fbm_3d(

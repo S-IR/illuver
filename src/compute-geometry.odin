@@ -12,9 +12,7 @@ ComputeMeshUniforms :: struct {
 }
 chunkGeometryCalcPipeline: vkh.PipelineData
 
-ChunkComputeCounterElement :: struct {
-	totalOpaquePoints: u32,
-}
+
 chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 	bindings := [4]vk.DescriptorSetLayoutBinding {
 		{
@@ -364,8 +362,11 @@ chunk_geometry_calculate :: proc(
 	countersPtr: rawptr
 	vma.map_memory(vkh.allocator, chunk.buffers.compute.counter.alloc, &countersPtr)
 	counts := (^ChunkComputeCounterElement)(countersPtr)
-	chunk.totalOpaquePoints = counts.totalOpaquePoints
-	assert(chunk.totalOpaquePoints <= u32(MAX_OPAQUE_VERTS), "opaque vertex overflow")
+	chunk.pointTotal = counts^
+
+	//TODO: have some ductape here in emergy case that the transparent buffer is too small
+	ensure(chunk.pointTotal.opaque <= u32(MAX_OPAQUE_VERTS))
+	ensure(chunk.pointTotal.transparent <= u32(MAX_TRANSPARENT_POINTS))
 
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
 
@@ -375,7 +376,7 @@ chunk_copy_current_to_other_frames :: proc(
 	state: ^ChunkWorkerState,
 	currentFrame: u32,
 ) {
-	if chunk.totalOpaquePoints == 0 do return
+	if chunk.pointTotal == {} do return
 	vk.ResetCommandBuffer(state.computeCB, {})
 	vk.BeginCommandBuffer(
 		state.computeCB,

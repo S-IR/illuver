@@ -170,6 +170,21 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 	dynamicStates := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
 
 
+	hsColorFormats := [3]vk.Format{vkh.swapchainImageFormat, .R16G16B16A16_SFLOAT, .R16_SFLOAT}
+	hsBlend := [3]vk.PipelineColorBlendAttachmentState {
+		{
+			blendEnable         = true,
+			srcColorBlendFactor = .SRC_ALPHA,
+			dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA,
+			colorBlendOp        = .ADD,
+			srcAlphaBlendFactor = .ONE,
+			dstAlphaBlendFactor = .ZERO,
+			alphaBlendOp        = .ADD,
+			colorWriteMask      = {.R, .G, .B, .A},
+		},
+		{colorWriteMask = {}},
+		{colorWriteMask = {}},
+	}
 	vkh.chk(
 		vk.CreateGraphicsPipelines(
 			vkh.device,
@@ -179,8 +194,8 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 				sType = .GRAPHICS_PIPELINE_CREATE_INFO,
 				pNext = &vk.PipelineRenderingCreateInfo {
 					sType = .PIPELINE_RENDERING_CREATE_INFO,
-					colorAttachmentCount = 1,
-					pColorAttachmentFormats = &vkh.swapchainImageFormat,
+					colorAttachmentCount = 3,
+					pColorAttachmentFormats = raw_data(hsColorFormats[:]),
 					depthAttachmentFormat = vkh.depthFormat,
 				},
 				stageCount = len(stages),
@@ -220,17 +235,8 @@ highlight_sphere_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 				},
 				pColorBlendState = &vk.PipelineColorBlendStateCreateInfo {
 					sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-					attachmentCount = 1,
-					pAttachments = &vk.PipelineColorBlendAttachmentState {
-						blendEnable = true,
-						srcColorBlendFactor = .SRC_ALPHA,
-						dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA,
-						colorBlendOp = .ADD,
-						srcAlphaBlendFactor = .ONE,
-						dstAlphaBlendFactor = .ZERO,
-						alphaBlendOp = .ADD,
-						colorWriteMask = {.R, .G, .B, .A},
-					},
+					attachmentCount = 3,
+					pAttachments = raw_data(hsBlend[:]),
 				},
 				layout = p.layout,
 				pDynamicState = &vk.PipelineDynamicStateCreateInfo {

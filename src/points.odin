@@ -137,15 +137,11 @@ PointVertexInput :: struct {
 #assert(size_of(PointVertexInput) == 32)
 
 @(require_results)
-point_pipeline_init :: proc(
-) -> (
-	triPipeline: vkh.PipelineData,
-	pointPipeline: vkh.PipelineData,
-) {
+point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: vkh.PipelineData) {
 	pushRange := vk.PushConstantRange {
 		stageFlags = {.VERTEX, .FRAGMENT},
 		offset     = 0,
-		size       = size_of(u32),
+		size       = size_of(PointPushConstants),
 	}
 
 	descLayoutBindings := [?]vk.DescriptorSetLayoutBinding {
@@ -211,10 +207,28 @@ point_pipeline_init :: proc(
 	viBindings := [?]vk.VertexInputBindingDescription {
 		{binding = 0, stride = size_of(PointVertexInput), inputRate = .VERTEX},
 	}
+
+	#assert(u32(offset_of(PointVertexInput, normal)) == 12)
+	#assert(u32(offset_of(PointVertexInput, pointVal)) == 24)
 	vaDescriptors := [?]vk.VertexInputAttributeDescription {
-		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = 0}, // position
-		{location = 1, binding = 0, format = .R32G32B32_SFLOAT, offset = 12}, // normal
-		{location = 2, binding = 0, format = .R32_UINT, offset = 24}, // pointType
+		{
+			location = 0,
+			binding = 0,
+			format = .R32G32B32_SFLOAT,
+			offset = u32(offset_of(PointVertexInput, pos)),
+		},
+		{
+			location = 1,
+			binding = 0,
+			format = .R32G32B32_SFLOAT,
+			offset = u32(offset_of(PointVertexInput, normal)),
+		},
+		{
+			location = 2,
+			binding = 0,
+			format = .R32_UINT,
+			offset = u32(offset_of(PointVertexInput, pointVal)),
+		},
 	}
 
 	dynamicStates := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
@@ -233,13 +247,18 @@ point_pipeline_init :: proc(
 			pName = "main",
 		},
 	}
-
+	opaqueColorFormats := [3]vk.Format{vkh.swapchainImageFormat, .R16G16B16A16_SFLOAT, .R16_SFLOAT}
+	opaqueBlend := [3]vk.PipelineColorBlendAttachmentState {
+		{colorWriteMask = {.R, .G, .B, .A}},
+		{colorWriteMask = {}}, // accum — write nothing
+		{colorWriteMask = {}}, // reveal — write nothing
+	}
 	createInfo := vk.GraphicsPipelineCreateInfo {
 		sType               = .GRAPHICS_PIPELINE_CREATE_INFO,
 		pNext               = &vk.PipelineRenderingCreateInfo {
 			sType = .PIPELINE_RENDERING_CREATE_INFO,
-			colorAttachmentCount = 1,
-			pColorAttachmentFormats = &vkh.swapchainImageFormat,
+			colorAttachmentCount = len(opaqueColorFormats),
+			pColorAttachmentFormats = raw_data(opaqueColorFormats[:]),
 			depthAttachmentFormat = vkh.depthFormat,
 		},
 		stageCount          = len(pipelineStages),
@@ -278,10 +297,8 @@ point_pipeline_init :: proc(
 		},
 		pColorBlendState    = &vk.PipelineColorBlendStateCreateInfo {
 			sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-			attachmentCount = 1,
-			pAttachments = &vk.PipelineColorBlendAttachmentState {
-				colorWriteMask = {.R, .G, .B, .A},
-			},
+			attachmentCount = 3,
+			pAttachments = raw_data(opaqueBlend[:]),
 		},
 		pDynamicState       = &vk.PipelineDynamicStateCreateInfo {
 			sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,

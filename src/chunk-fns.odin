@@ -46,15 +46,22 @@ CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 
 CHUNK_HEIGHTMAP_SIZE :: VERTS_PER_X_DIR * VERTS_PER_Z_DIR
 NUM_WORKER_THREADS := 4
-MAX_OPAQUE_VERTS :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
-VERTEX_BUFFER_SIZE :: MAX_OPAQUE_VERTS * size_of(PointVertexInput)
 
+#assert(CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36 > 0)
+
+MAX_OPAQUE_VERTS: u32 : u32(CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 18)
+MAX_TRANSPARENT_POINTS: u32 : MAX_OPAQUE_VERTS / 4
+TRANSPARENT_POINTS_OFFSET: u32 : MAX_OPAQUE_VERTS
+
+VERTEX_BUFFER_SIZE :: (MAX_OPAQUE_VERTS + MAX_TRANSPARENT_POINTS) * size_of(PointVertexInput)
+ChunkComputeCounterElement :: struct {
+	opaque:      u32,
+	transparent: u32,
+}
 Chunk :: struct {
-	points:                                    [VERTS_PER_X_DIR *
-	VERTS_PER_Y_DIR *
-	VERTS_PER_Z_DIR]u16,
-	heightMap:                                 [CHUNK_HEIGHTMAP_SIZE]i32,
-	buffers:                                   struct {
+	points:            [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
+	heightMap:         [CHUNK_HEIGHTMAP_SIZE]i32,
+	buffers:           struct {
 		vertices: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
 		compute:  struct {
 			pointsInput:     vkh.BufferAlloc,
@@ -63,14 +70,14 @@ Chunk :: struct {
 			stagingVertices: vkh.BufferAlloc,
 		},
 	},
-	copyTimelineValue:                         [vkh.MAX_FRAMES_IN_FLIGHT]u64,
-	pos:                                       [3]i32,
-	pendingUpload:                             [vkh.MAX_FRAMES_IN_FLIGHT]b32,
-	mutex:                                     sync.RW_Mutex,
-	totalOpaquePoints: u32,
-	arena:                                     virtual.Arena,
-	alloc:                                     mem.Allocator,
-	dirty:                                     bool,
+	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
+	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
+	mutex:             sync.RW_Mutex,
+	pos:               [3]i32,
+	pointTotal:        ChunkComputeCounterElement,
+	arena:             virtual.Arena,
+	alloc:             mem.Allocator,
+	dirty:             bool,
 }
 
 
