@@ -14,7 +14,7 @@ chunkGeometryCalcPipeline: vkh.PipelineData
 
 
 chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
-	bindings := [4]vk.DescriptorSetLayoutBinding {
+	bindings := [5]vk.DescriptorSetLayoutBinding {
 		{
 			binding = 0,
 			descriptorType = .STORAGE_BUFFER,
@@ -39,6 +39,12 @@ chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 			descriptorCount = 1,
 			stageFlags = {.COMPUTE},
 		}, // uniform
+		{
+			binding = 4,
+			descriptorType = .STORAGE_BUFFER,
+			descriptorCount = 1,
+			stageFlags = {.COMPUTE},
+		}, // indices
 	}
 	vkh.chk(
 		vk.CreateDescriptorSetLayout(
@@ -173,7 +179,22 @@ chunk_geometry_calc_buffers_create :: proc(chunk: ^Chunk) {
 			),
 		)
 	}
-
+	if chunk.buffers.compute.stagingIndices.buffer == {} {
+		vkh.chk(
+			vma.create_buffer(
+				vkh.allocator,
+				{
+					sType = .BUFFER_CREATE_INFO,
+					size = vk.DeviceSize(INDEX_BUFFER_SIZE),
+					usage = {.STORAGE_BUFFER, .TRANSFER_SRC},
+				},
+				{usage = .Auto, flags = {.Mapped, .Host_Access_Sequential_Write}},
+				&chunk.buffers.compute.stagingIndices.buffer,
+				&chunk.buffers.compute.stagingIndices.alloc,
+				nil,
+			),
+		)
+	}
 
 }
 chunk_geometry_calculate :: proc(
@@ -199,6 +220,7 @@ chunk_geometry_calculate :: proc(
 		vk.DeviceSize(vk.WHOLE_SIZE),
 		zero,
 	)
+
 
 	barrier := vk.BufferMemoryBarrier {
 		sType         = .BUFFER_MEMORY_BARRIER,
@@ -261,7 +283,7 @@ chunk_geometry_calculate :: proc(
 
 	vk.CmdBindPipeline(state.computeCB, .COMPUTE, pipeline.pipeline)
 
-	writes := [4]vk.WriteDescriptorSet {
+	writes := [5]vk.WriteDescriptorSet {
 		{
 			sType = .WRITE_DESCRIPTOR_SET,
 			dstBinding = 0,
@@ -302,6 +324,16 @@ chunk_geometry_calculate :: proc(
 				range = vk.DeviceSize(vk.WHOLE_SIZE),
 			},
 		},
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 4,
+			descriptorCount = 1,
+			descriptorType = .STORAGE_BUFFER,
+			pBufferInfo = &vk.DescriptorBufferInfo {
+				buffer = chunk.buffers.compute.stagingIndices.buffer,
+				range = vk.DeviceSize(vk.WHOLE_SIZE),
+			},
+		},
 	}
 	vk.CmdPushDescriptorSetKHR(
 		state.computeCB,
@@ -312,12 +344,19 @@ chunk_geometry_calculate :: proc(
 		raw_data(writes[:]),
 	)
 
-	outBarriers := [1]vk.BufferMemoryBarrier {
+	outBarriers := [2]vk.BufferMemoryBarrier {
 		{
 			sType = .BUFFER_MEMORY_BARRIER,
 			srcAccessMask = {.SHADER_WRITE},
 			dstAccessMask = {.TRANSFER_READ},
 			buffer = chunk.buffers.compute.stagingVertices.buffer,
+			size = vk.DeviceSize(vk.WHOLE_SIZE),
+		},
+		{
+			sType = .BUFFER_MEMORY_BARRIER,
+			srcAccessMask = {.SHADER_WRITE},
+			dstAccessMask = {.TRANSFER_READ},
+			buffer = chunk.buffers.compute.stagingIndices.buffer,
 			size = vk.DeviceSize(vk.WHOLE_SIZE),
 		},
 	}
@@ -365,8 +404,8 @@ chunk_geometry_calculate :: proc(
 	chunk.pointTotal = counts^
 
 	//TODO: have some ductape here in emergy case that the transparent buffer is too small
-	ensure(chunk.pointTotal.opaque <= u32(MAX_OPAQUE_POINTS))
-	ensure(chunk.pointTotal.transparent <= u32(MAX_TRANSPARENT_POINTS))
+	ensure(chunk.pointTotal.opaque <= MAX_OPAQUE_INDICES)
+	ensure(chunk.pointTotal.transparent <= MAX_TRANSPARENT_INDICES)
 
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
 
@@ -400,6 +439,14 @@ chunk_copy_current_to_other_frames :: proc(
 			buffer        = chunk.buffers.vertices[i].buffer,
 			size          = vk.DeviceSize(vk.WHOLE_SIZE),
 		}
+		vk.CmdCopyBuffer(
+			state.computeCB,
+			chunk.buffers.compute.stagingIndices.buffer,
+			chunk.buffers.indices[i].buffer,
+			1,
+			&vk.BufferCopy{size = vk.DeviceSize(INDEX_BUFFER_SIZE)},
+		)
+
 	}
 
 	vk.CmdPipelineBarrier(
@@ -458,6 +505,7 @@ chunk_geometry_calc_buffers_destroy :: proc(chunk: ^Chunk) {
 	if chunk.buffers.compute.uniform.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.uniform.buffer, chunk.buffers.compute.uniform.alloc)
 
 	if chunk.buffers.compute.stagingVertices.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.stagingVertices.buffer, chunk.buffers.compute.stagingVertices.alloc)
+	if chunk.buffers.compute.stagingIndices.buffer != {} do vma.destroy_buffer(vkh.allocator, chunk.buffers.compute.stagingIndices.buffer, chunk.buffers.compute.stagingIndices.alloc)
 
 
 }

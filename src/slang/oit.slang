@@ -17,8 +17,7 @@ PushConstants pc;
 
 struct VSInput {
   [[vk::location(0)]] float3 pos   : POSITION;
-  [[vk::location(1)]] float3 _nrm  : NORMAL;
-  [[vk::location(2)]] uint    val  : TEXCOORD0;
+  [[vk::location(1)]] uint   val  : TEXCOORD0;
 };
 struct VSOutput {
   float4 pos      : SV_Position;

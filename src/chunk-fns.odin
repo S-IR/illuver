@@ -49,11 +49,14 @@ NUM_WORKER_THREADS := 4
 
 #assert(CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36 > 0)
 
-MAX_OPAQUE_POINTS: u32 : u32(CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 18)
-MAX_TRANSPARENT_POINTS: u32 : MAX_OPAQUE_POINTS / 4
-TRANSPARENT_POINTS_OFFSET: u32 : MAX_OPAQUE_POINTS
+MAX_VERTS :: u32(VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR) // 8192
+VERTEX_BUFFER_SIZE :: MAX_VERTS * size_of(PointVertexInput)
 
-VERTEX_BUFFER_SIZE :: (MAX_OPAQUE_POINTS + MAX_TRANSPARENT_POINTS) * size_of(PointVertexInput)
+MAX_OPAQUE_INDICES: u32 : u32(CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36)
+MAX_TRANSPARENT_INDICES: u32 : MAX_OPAQUE_INDICES
+TRANSPARENT_INDICES_OFFSET: u32 : MAX_OPAQUE_INDICES
+INDEX_BUFFER_SIZE :: (MAX_OPAQUE_INDICES + MAX_TRANSPARENT_INDICES) * size_of(u32)
+
 ChunkComputeCounterElement :: struct {
 	opaque:      u32,
 	transparent: u32,
@@ -63,11 +66,13 @@ Chunk :: struct {
 	heightMap:         [CHUNK_HEIGHTMAP_SIZE]i32,
 	buffers:           struct {
 		vertices: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
+		indices:  [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
 		compute:  struct {
 			pointsInput:     vkh.BufferAlloc,
 			counter:         vkh.BufferAlloc,
 			uniform:         vkh.BufferAlloc,
 			stagingVertices: vkh.BufferAlloc,
+			stagingIndices:  vkh.BufferAlloc,
 		},
 	},
 	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,

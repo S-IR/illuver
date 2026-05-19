@@ -235,6 +235,22 @@ chunk_init :: proc(chunk: ^Chunk, pos: [3]i32, state: ^ChunkWorkerState) {
 					),
 				)
 			}
+			if chunk.buffers.indices[i].buffer == {} {
+				vkh.chk(
+					vma.create_buffer(
+						vkh.allocator,
+						{
+							sType = .BUFFER_CREATE_INFO,
+							size = vk.DeviceSize(INDEX_BUFFER_SIZE),
+							usage = {.INDEX_BUFFER, .TRANSFER_DST},
+						},
+						{usage = .Auto},
+						&chunk.buffers.indices[i].buffer,
+						&chunk.buffers.indices[i].alloc,
+						nil,
+					),
+				)
+			}
 		}
 	}
 	chunk_geometry_calc_buffers_create(chunk)
@@ -542,6 +558,7 @@ chunks_draw :: proc(
 	}
 	for chunk in renderedChunks {
 		if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
+		if chunk.pointTotal.opaque == 0 do continue
 
 		if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
 			waitInfo := vk.SemaphoreWaitInfo {
@@ -557,6 +574,11 @@ chunks_draw :: proc(
 		vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
 		vertexOffset := vk.DeviceSize(0)
 		vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
+
+		indexBuffer := chunk.buffers.indices[vkh.frameIndex].buffer
+		indexOffset := vk.DeviceSize(0)
+		vk.CmdBindIndexBuffer(cb, indexBuffer, indexOffset, .UINT32)
+
 
 		vk.CmdBindPipeline(cb, .GRAPHICS, triPipeline.pipeline)
 		vk.CmdPushDescriptorSetKHR(
@@ -578,7 +600,8 @@ chunks_draw :: proc(
 			size_of(PointPushConstants),
 			&pushTri,
 		)
-		vk.CmdDraw(cb, chunk.pointTotal.opaque, 1, 0, 0)
+		vk.CmdDrawIndexed(cb, chunk.pointTotal.opaque, 1, 0, 0, 0)
+
 	}
 }
 chunks_draw_shadow :: proc(
@@ -622,6 +645,7 @@ chunks_draw_shadow :: proc(
 	vk.CmdPushDescriptorSetKHR(cb, .GRAPHICS, shadowPipeline.layout, 0, 1, &write)
 	vk.CmdPushConstants(cb, shadowPipeline.layout, {.VERTEX}, 0, size_of(u32), cascadeIndex)
 	for chunk in renderedChunks {
+		if chunk.pointTotal.opaque == 0 do continue
 		if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
 			waitInfo := vk.SemaphoreWaitInfo {
 				sType          = .SEMAPHORE_WAIT_INFO,
@@ -636,69 +660,14 @@ chunks_draw_shadow :: proc(
 		vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
 		vertexOffset := vk.DeviceSize(0)
 		vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
-		vk.CmdDraw(cb, chunk.pointTotal.opaque, 1, 0, 0)
-	}
-}
 
-chunks_destroy :: proc() {
-	chunkShutdown = true
-	for _ in chunkWorkerThreads {
-		sync.sema_post(&chunkJobSema)
-	}
+		indexBuffer := chunk.buffers.indices[vkh.frameIndex].buffer
+		indexOffset := vk.DeviceSize(0)
+		vk.CmdBindIndexBuffer(cb, indexBuffer, indexOffset, .UINT32)
 
-	for t in chunkWorkerThreads {
-		thread.join(t)
-		thread.destroy(t)
-	}
-
-	for &chunk in renderedChunks do chunk_destroy(chunk)
-
-
-	for &workerState in chunkWorkerStates {
-		if workerState.computeCommandPool != {} {
-			if workerState.computeCB != {} {
-				vk.FreeCommandBuffers(
-					vkh.device,
-					workerState.computeCommandPool,
-					1,
-					&workerState.computeCB,
-				)
-			}
-			vk.DestroyCommandPool(vkh.device, workerState.computeCommandPool, nil)
-		}
-
-		if workerState.computeFence != {} {
-			vk.WaitForFences(vkh.device, 1, &workerState.computeFence, true, max(u64))
-			vk.DestroyFence(vkh.device, workerState.computeFence, nil)
-		}
-
+		vk.CmdDrawIndexed(cb, chunk.pointTotal.opaque, 1, 0, 0, 0)
 
 	}
-	vmem.arena_destroy(&WorldArena)
-
-
-}
-chunk_destroy :: proc(chunk: ^Chunk) {
-	assert(chunk != nil)
-
-	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-		if chunk.buffers.vertices[i].alloc != {} {
-			vma.destroy_buffer(
-				vkh.allocator,
-				chunk.buffers.vertices[i].buffer,
-				chunk.buffers.vertices[i].alloc,
-			)
-			chunk.buffers.vertices[i] = {}
-		}
-	}
-	chunk_geometry_calc_buffers_destroy(chunk)
-
-	chunk.buffers = {}
-
-	free_all(chunk.alloc)
-	chunk.pos = {}
-	chunk.pointTotal = {}
-
 }
 
 chunks_draw_transparent :: proc(
@@ -768,6 +737,80 @@ chunks_draw_transparent :: proc(
 			size_of(OitPushConstants),
 			&push,
 		)
-		vk.CmdDraw(cb, chunk.pointTotal.transparent, 1, TRANSPARENT_POINTS_OFFSET, 0)
+		indexBuffer := chunk.buffers.indices[vkh.frameIndex].buffer
+		indexOffset := vk.DeviceSize(0)
+
+		vk.CmdBindIndexBuffer(cb, indexBuffer, 0, .UINT32)
+		vk.CmdDrawIndexed(cb, chunk.pointTotal.transparent, 1, TRANSPARENT_INDICES_OFFSET, 0, 0)
+
 	}
+}
+
+chunks_destroy :: proc() {
+	chunkShutdown = true
+	for _ in chunkWorkerThreads {
+		sync.sema_post(&chunkJobSema)
+	}
+
+	for t in chunkWorkerThreads {
+		thread.join(t)
+		thread.destroy(t)
+	}
+
+	for &chunk in renderedChunks do chunk_destroy(chunk)
+
+
+	for &workerState in chunkWorkerStates {
+		if workerState.computeCommandPool != {} {
+			if workerState.computeCB != {} {
+				vk.FreeCommandBuffers(
+					vkh.device,
+					workerState.computeCommandPool,
+					1,
+					&workerState.computeCB,
+				)
+			}
+			vk.DestroyCommandPool(vkh.device, workerState.computeCommandPool, nil)
+		}
+
+		if workerState.computeFence != {} {
+			vk.WaitForFences(vkh.device, 1, &workerState.computeFence, true, max(u64))
+			vk.DestroyFence(vkh.device, workerState.computeFence, nil)
+		}
+
+
+	}
+	vmem.arena_destroy(&WorldArena)
+
+
+}
+chunk_destroy :: proc(chunk: ^Chunk) {
+	assert(chunk != nil)
+
+	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
+		if chunk.buffers.vertices[i].alloc != {} {
+			vma.destroy_buffer(
+				vkh.allocator,
+				chunk.buffers.vertices[i].buffer,
+				chunk.buffers.vertices[i].alloc,
+			)
+			chunk.buffers.vertices[i] = {}
+		}
+		if chunk.buffers.indices[i].alloc != {} {
+			vma.destroy_buffer(
+				vkh.allocator,
+				chunk.buffers.indices[i].buffer,
+				chunk.buffers.indices[i].alloc,
+			)
+			chunk.buffers.indices[i] = {}
+		}
+	}
+	chunk_geometry_calc_buffers_destroy(chunk)
+
+	chunk.buffers = {}
+
+	free_all(chunk.alloc)
+	chunk.pos = {}
+	chunk.pointTotal = {}
+
 }

@@ -27,14 +27,11 @@ struct VertexInput {
   [[vk::location(0)]]
   float3 position : POSITION;
   [[vk::location(1)]]
-  float3 normal : NORMAL;
-  [[vk::location(2)]]
   uint pointVal : TEXCOORD0;
 };
 struct VertexOutput {
   float4 position : SV_Position;
   nointerpolation float4 color : COLOR0;
-  float3 normal : NORMAL0;
   float3 worldPos : TEXCOORD1;
 };
 
@@ -46,7 +43,6 @@ VertexOutput vertexMain(VertexInput input) {
   output.position = mul(proj, viewPos);
   float4 baseCol = pointFinalColor(uint16_t(input.pointVal));
   output.color = baseCol;
-  output.normal = input.normal;
 
   return output;
 }
@@ -81,8 +77,10 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   // float attenuation =
   // 1.0 / (1.0 + 0.09 * distance + 0.032 * distance * distance);
   float attenuation = 1.0;
+  float3 dpdx = ddx(input.worldPos);
+  float3 dpdy = ddy(input.worldPos);
 
-  float3 normal = normalize(input.normal);
+  float3 normal = normalize(cross(dpdx, dpdy));
   if (dot(normal, lightDir) < 0.0) normal = -normal;
   float diff = dot(normal, lightDir);
   float3 diffuse = diff * surfaceColor * sunColor.rgb * attenuation;

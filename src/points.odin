@@ -130,11 +130,10 @@ PointType :: enum u16 {
 BottomFacedIndices := [?]u16{0, 1, 2, 0, 2, 3}
 
 PointVertexInput :: struct {
-	pos, normal: [3]f32,
-	pointVal:    u32,
-	_pad:        u32,
+	pos:      [3]f32,
+	pointVal: u32,
 }
-#assert(size_of(PointVertexInput) == 32)
+// #assert(size_of(PointVertexInput) == 32)
 
 @(require_results)
 point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: vkh.PipelineData) {
@@ -204,12 +203,14 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 	defer vk.DestroyShaderModule(vkh.device, vertModule, nil)
 	defer vk.DestroyShaderModule(vkh.device, fragModule, nil)
 
+	#assert(u32(offset_of(PointVertexInput, pointVal)) == 12)
+	#assert(size_of(PointVertexInput) == 16)
+
 	viBindings := [?]vk.VertexInputBindingDescription {
 		{binding = 0, stride = size_of(PointVertexInput), inputRate = .VERTEX},
 	}
 
-	#assert(u32(offset_of(PointVertexInput, normal)) == 12)
-	#assert(u32(offset_of(PointVertexInput, pointVal)) == 24)
+	// #assert(u32(offset_of(PointVertexInput, pointVal)) == 24)
 	vaDescriptors := [?]vk.VertexInputAttributeDescription {
 		{
 			location = 0,
@@ -219,12 +220,6 @@ point_pipeline_init :: proc() -> (triPipeline: vkh.PipelineData, pointPipeline: 
 		},
 		{
 			location = 1,
-			binding = 0,
-			format = .R32G32B32_SFLOAT,
-			offset = u32(offset_of(PointVertexInput, normal)),
-		},
-		{
-			location = 2,
 			binding = 0,
 			format = .R32_UINT,
 			offset = u32(offset_of(PointVertexInput, pointVal)),

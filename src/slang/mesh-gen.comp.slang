@@ -12,6 +12,9 @@ cbuffer ChunkInfo {
   uint seed;
 };
 
+[[vk::binding(4, 0)]]
+RWByteAddressBuffer indicesOut;
+
 static const int VERTS_PER_X_DIR = 16;
 static const int VERTS_PER_Y_DIR = 32;
 static const int VERTS_PER_Z_DIR = 16;
@@ -21,11 +24,17 @@ static const int CUBES_PER_Z_DIR = 15;
 static const int VERT_STRIDE_X = VERTS_PER_Z_DIR * VERTS_PER_Y_DIR;
 static const int VERT_STRIDE_Y = VERTS_PER_Z_DIR;
 
-static const uint VERTEX_STRIDE = 32;
+static const uint VERTEX_STRIDE = 16;
+static const uint MAX_VERTS = VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR;
 
 //CHANGE IN ODIN WHEN CHANGING HERE AND VICE VERSA
-static const uint MAX_OPAQUE_POINTS = CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 18;
-static const uint MAX_TRANSPARENT_POINTS = MAX_OPAQUE_POINTS / 4;
+static const uint MAX_OPAQUE_INDICES =  CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36;
+static const uint MAX_TRANSPARENT_INDICES =  MAX_OPAQUE_INDICES ;
+
+
+uint gridIdx(int3 p) {
+    return uint(p.x) * VERT_STRIDE_X + uint(p.y) * VERT_STRIDE_Y + uint(p.z);
+}
 
 uint16_t getPoint(int3 cell) {
   if (cell.x < 0 || cell.x >= VERTS_PER_X_DIR) return uint16_t(PointType::Air);
@@ -50,10 +59,16 @@ float3 worldPosition(int3 local) {
   return float3(world) + calculateJitter(world);
 }
 
-void writeVert(uint byteOffset, float3 pos, float3 normal, uint p) {
-  vertsOut.Store3(byteOffset +  0, asuint(pos));
-  vertsOut.Store3(byteOffset + 12, asuint(normal));
-  vertsOut.Store (byteOffset + 24, p);
+void writeVert(int3 p, uint pointVal) {
+    uint byteOffset = gridIdx(p) * VERTEX_STRIDE;
+    vertsOut.Store3(byteOffset + 0,  asuint(worldPosition(p)));
+    vertsOut.Store (byteOffset + 12, pointVal);
+}
+
+void writeTriangle(uint idxByteOffset, uint v0, uint v1, uint v2) {
+    indicesOut.Store(idxByteOffset + 0, v0);
+    indicesOut.Store(idxByteOffset + 4, v1);
+    indicesOut.Store(idxByteOffset + 8, v2);
 }
 
 static const int3 triVerts[6][3] = {
@@ -133,33 +148,25 @@ void main(uint3 id: SV_DispatchThreadID) {
     bool isTransparent = transparentCount == 3;
     if (transparentCount > 0 && transparentCount < 3)
         continue;
-    if (isTransparentPoint(cellType) && isSurroundedByWater(cell))
-        continue;
-
-    float3 pos0 = worldPosition(cell + v0);
-    float3 pos1 = worldPosition(cell + v1);
-    float3 pos2 = worldPosition(cell + v2);
 
 
-    uint vIdx;
+    int3 c0 = cell + v0;
+    int3 c1 = cell + v1;
+    int3 c2 = cell + v2;
+
+    writeVert(c0, uint(p0));
+    writeVert(c1, uint(p1));
+    writeVert(c2, uint(p2));
+
+    uint iIdx;
     static uint INTERLOCKED_AMOUNT = 3;
     if (!isTransparent) {
-      counter.InterlockedAdd(0, INTERLOCKED_AMOUNT, vIdx);
+      counter.InterlockedAdd(0, INTERLOCKED_AMOUNT, iIdx);
     } else {
-      counter.InterlockedAdd(4, INTERLOCKED_AMOUNT, vIdx);
-      vIdx += MAX_OPAQUE_POINTS;
+      counter.InterlockedAdd(4, INTERLOCKED_AMOUNT, iIdx);
+      iIdx += MAX_OPAQUE_INDICES;
     }
+    writeTriangle(iIdx * 4, gridIdx(c0), gridIdx(c1), gridIdx(c2));
 
-    uint offset = vIdx * VERTEX_STRIDE;
-
-    float3 n1 = normalize(cross(pos1 - pos0, pos2 - pos0));
-    writeVert(offset + 0 * VERTEX_STRIDE, pos0, n1, uint(p0));
-    writeVert(offset + 1 * VERTEX_STRIDE, pos1, n1, uint(p1));
-    writeVert(offset + 2 * VERTEX_STRIDE, pos2, n1, uint(p2));
-
-    // float3 n2 = normalize(cross(pos2 - pos0, pos1 - pos0));
-    // writeVert(offset + 3 * VERTEX_STRIDE, pos0, n2, uint(p0));
-    // writeVert(offset + 4 * VERTEX_STRIDE, pos2, n2, uint(p2));
-    // writeVert(offset + 5 * VERTEX_STRIDE, pos1, n2, uint(p1));
   }
 }

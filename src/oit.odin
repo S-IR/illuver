@@ -119,8 +119,8 @@ oit_pipelines_init :: proc() -> (oit, composite: vkh.PipelineData) {
 		{binding = 0, stride = size_of(PointVertexInput), inputRate = .VERTEX},
 	}
 
-	#assert(u32(offset_of(PointVertexInput, normal)) == 12)
-	#assert(u32(offset_of(PointVertexInput, pointVal)) == 24)
+	// #assert(u32(offset_of(PointVertexInput, normal)) == 12)
+	#assert(u32(offset_of(PointVertexInput, pointVal)) == 12)
 
 	vaDescriptors := [?]vk.VertexInputAttributeDescription {
 		{
@@ -131,12 +131,6 @@ oit_pipelines_init :: proc() -> (oit, composite: vkh.PipelineData) {
 		},
 		{
 			location = 1,
-			binding = 0,
-			format = .R32G32B32_SFLOAT,
-			offset = u32(offset_of(PointVertexInput, normal)),
-		},
-		{
-			location = 2,
 			binding = 0,
 			format = .R32_UINT,
 			offset = u32(offset_of(PointVertexInput, pointVal)),
