@@ -145,6 +145,6 @@ export float4 pointFinalColor(uint16_t point) {
   float3 base = baseColor(getPointType(point));
   float3 energy = energyToColor(point);
   float3 combined = base * 0.9 + energy * 0.1;
-  float alpha = (getPointType(point) == PointType::Water) ?  0.7: 1.0;
+  float alpha = (getPointType(point) == PointType::Water) ?  0.5: 1.0;
   return float4(combined, alpha);
 }

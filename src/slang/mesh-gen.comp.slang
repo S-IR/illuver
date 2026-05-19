@@ -86,6 +86,14 @@ bool isSurrounded(int3 cell) {
   return true;
 }
 
+bool isSurroundedByWater(int3 cell) {
+  for (int i = 0; i < 26; i++) {
+    if (!isTransparentPoint(getPointType(getPoint(cell + neighborOffsets[i]))))
+      return false;
+  }
+  return true;
+}
+
 [shader("compute")]
 [numthreads(8, 8, 8)]
 void main(uint3 id: SV_DispatchThreadID) {
@@ -94,7 +102,12 @@ void main(uint3 id: SV_DispatchThreadID) {
   if (cell.x >= CUBES_PER_X_DIR || cell.y >= CUBES_PER_Y_DIR || cell.z >= CUBES_PER_Z_DIR)
     return;
 
-  if (getPointType(getPoint(cell)) == PointType::Air)
+  PointType cellType = getPointType(getPoint(cell));
+
+  if (cellType == PointType::Air)
+    return;
+
+  if (isTransparentPoint(cellType) && isSurroundedByWater(cell))
     return;
 
   if (isSurrounded(cell))
@@ -112,15 +125,21 @@ void main(uint3 id: SV_DispatchThreadID) {
     PointType p0pt = getPointType(p0);
     PointType p1pt = getPointType(p1);
     PointType p2pt = getPointType(p2);
+    uint transparentCount = isTransparentPoint(p0pt) +  isTransparentPoint(p1pt) + isTransparentPoint(p2pt);
+
 
     if (p0pt == PointType::Air || p1pt == PointType::Air || p2pt == PointType::Air)
-      continue;
+        continue;
+    bool isTransparent = transparentCount == 3;
+    if (transparentCount > 0 && transparentCount < 3)
+        continue;
+    if (isTransparentPoint(cellType) && isSurroundedByWater(cell))
+        continue;
 
     float3 pos0 = worldPosition(cell + v0);
     float3 pos1 = worldPosition(cell + v1);
     float3 pos2 = worldPosition(cell + v2);
 
-    bool isTransparent = isTransparentPoint(p0pt) || isTransparentPoint(p1pt) || isTransparentPoint(p2pt);
 
     uint vIdx;
     if (!isTransparent) {
