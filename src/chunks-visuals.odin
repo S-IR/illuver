@@ -215,28 +215,18 @@ chunk_init :: proc(chunk: ^Chunk, pos: [3]i32, state: ^ChunkWorkerState) {
 	{
 		tracy.Zone()
 		for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
-			if chunk.buffers.vertices[i].buffer != {} do continue
-
-			vkh.chk(
-				vma.create_buffer(
-					vkh.allocator,
-					{
-						sType = .BUFFER_CREATE_INFO,
-						size = vk.DeviceSize(CHUNK_GPU_VERTEX_BUFFER_SIZE),
-						usage = {.VERTEX_BUFFER, .TRANSFER_DST},
-					},
-					{
-						flags = {.Host_Access_Sequential_Write, .Mapped},
-						required_flags = {.HOST_VISIBLE},
-						usage = .Auto,
-					},
-					&chunk.buffers.vertices[i].buffer,
-					&chunk.buffers.vertices[i].alloc,
-					nil,
-				),
-			)
-
-
+			if chunk.buffers.vertices[i].buffer == {} {
+				vkh.chk(
+					vma.create_buffer(
+						vkh.allocator,
+						{sType = .BUFFER_CREATE_INFO, size = vk.DeviceSize(VERTEX_BUFFER_SIZE), usage = {.VERTEX_BUFFER, .TRANSFER_DST}},
+						{flags = {.Host_Access_Sequential_Write, .Mapped}, required_flags = {.HOST_VISIBLE}, usage = .Auto},
+						&chunk.buffers.vertices[i].buffer,
+						&chunk.buffers.vertices[i].alloc,
+						nil,
+					),
+				)
+			}
 		}
 	}
 	chunk_geometry_calc_buffers_create(chunk)
@@ -478,7 +468,7 @@ calculate_jitter :: #force_inline proc "contextless" (x, y, z: i32, seed: u64) -
 
 chunks_draw :: proc(
 	cb: vk.CommandBuffer,
-	triPipeline: vkh.PipelineData,
+	triPipeline, triTransparentPipeline: vkh.PipelineData,
 	pointPipeline: vkh.PipelineData,
 	currCamera: camera.Camera,
 	sun: ^SunRenderData,
@@ -503,7 +493,41 @@ chunks_draw :: proc(
 		1,
 		&vk.Rect2D{extent = {width = gs.screenWidth, height = gs.screenHeight}},
 	)
-
+	writes := [?]vk.WriteDescriptorSet {
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 0,
+			descriptorCount = 1,
+			descriptorType = .UNIFORM_BUFFER,
+			pBufferInfo = &{
+				buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
+				offset = 0,
+				range = vkh.CameraUBOSize,
+			},
+		},
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 1,
+			descriptorCount = 1,
+			descriptorType = .UNIFORM_BUFFER,
+			pBufferInfo = &{
+				buffer = sun.uboBuffers[vkh.frameIndex].buffer,
+				offset = 0,
+				range = vk.DeviceSize(size_of(SunUBO)),
+			},
+		},
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 2,
+			descriptorCount = 1,
+			descriptorType = .COMBINED_IMAGE_SAMPLER,
+			pImageInfo = &{
+				sampler = sun.shadow.sampler,
+				imageView = sun.shadow.arrayView,
+				imageLayout = .READ_ONLY_OPTIMAL,
+			},
+		},
+	}
 	for chunk in renderedChunks {
 		if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
 
@@ -521,44 +545,6 @@ chunks_draw :: proc(
 		vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
 		vertexOffset := vk.DeviceSize(0)
 		vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
-
-
-		writes := [?]vk.WriteDescriptorSet {
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstBinding = 0,
-				descriptorCount = 1,
-				descriptorType = .UNIFORM_BUFFER,
-				pBufferInfo = &{
-					buffer = vkh.cameraBuffers[vkh.frameIndex].buffer,
-					offset = 0,
-					range = vkh.CameraUBOSize,
-				},
-			},
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstBinding = 1,
-				descriptorCount = 1,
-				descriptorType = .UNIFORM_BUFFER,
-				pBufferInfo = &{
-					buffer = sun.uboBuffers[vkh.frameIndex].buffer,
-					offset = 0,
-					range = vk.DeviceSize(size_of(SunUBO)),
-				},
-			},
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstBinding = 2,
-				descriptorCount = 1,
-				descriptorType = .COMBINED_IMAGE_SAMPLER,
-				pImageInfo = &{
-					sampler = sun.shadow.sampler,
-					imageView = sun.shadow.view,
-					imageLayout = .READ_ONLY_OPTIMAL,
-				},
-			},
-		}
-
 
 		vk.CmdBindPipeline(cb, .GRAPHICS, triPipeline.pipeline)
 		vk.CmdPushDescriptorSetKHR(
@@ -579,7 +565,7 @@ chunks_draw :: proc(
 			size_of(u32),
 			&pushTri,
 		)
-		vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
+		vk.CmdDraw(cb, chunk.totalOpaquePoints, 1, 0, 0)
 
 		// vk.CmdBindPipeline(cb, .GRAPHICS, pointPipeline.pipeline)
 		// vk.CmdPushDescriptorSetKHR(
@@ -602,12 +588,57 @@ chunks_draw :: proc(
 		// )
 		// vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
 	}
+
+	for chunk in renderedChunks {
+		if chunk.totalTransparentPoints == 0 do continue
+		if !is_chunk_in_camera_frustrum(chunk.pos, currCamera) do continue
+
+		if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
+			waitInfo := vk.SemaphoreWaitInfo {
+				sType          = .SEMAPHORE_WAIT_INFO,
+				semaphoreCount = 1,
+				pSemaphores    = &vkh.copyTimelineSemaphore,
+				pValues        = &chunk.copyTimelineValue[vkh.frameIndex],
+			}
+			vk.WaitSemaphores(vkh.device, &waitInfo, max(u64))
+			chunk.copyTimelineValue[vkh.frameIndex] = 0
+		}
+
+		transparentBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
+		vertexOffset := vk.DeviceSize(MAX_OPAQUE_VERTS * size_of(PointVertexInput))
+		vk.CmdBindVertexBuffers(cb, 0, 1, &transparentBuffer, &vertexOffset)
+
+		vk.CmdBindPipeline(cb, .GRAPHICS, triTransparentPipeline.pipeline)
+		vk.CmdPushDescriptorSetKHR(
+			cb,
+			.GRAPHICS,
+			triTransparentPipeline.layout,
+			0,
+			len(writes),
+			raw_data(writes[:]),
+		)
+
+		pushTri := u32(0)
+		vk.CmdPushConstants(
+			cb,
+			triTransparentPipeline.layout,
+			{.VERTEX, .FRAGMENT},
+			0,
+			size_of(u32),
+			&pushTri,
+		)
+		vk.CmdDraw(cb, chunk.totalTransparentPoints, 1, 0, 0)
+	}
+
+
 }
 chunks_draw_shadow :: proc(
 	cb: vk.CommandBuffer,
 	shadowPipeline: vkh.PipelineData,
 	lightVPBuffer: vk.Buffer,
+	cascadeIndex: ^u32,
 ) {
+	assert(cascadeIndex != nil && cascadeIndex^ < u32(CSM_CASCADE_COUNT))
 	vk.CmdBindPipeline(cb, .GRAPHICS, shadowPipeline.pipeline)
 
 	vk.CmdSetViewport(
@@ -640,7 +671,7 @@ chunks_draw_shadow :: proc(
 		},
 	}
 	vk.CmdPushDescriptorSetKHR(cb, .GRAPHICS, shadowPipeline.layout, 0, 1, &write)
-
+	vk.CmdPushConstants(cb, shadowPipeline.layout, {.VERTEX}, 0, size_of(u32), cascadeIndex)
 	for chunk in renderedChunks {
 		if chunk.copyTimelineValue[vkh.frameIndex] != 0 {
 			waitInfo := vk.SemaphoreWaitInfo {
@@ -656,7 +687,7 @@ chunks_draw_shadow :: proc(
 		vertexBuffer := chunk.buffers.vertices[vkh.frameIndex].buffer
 		vertexOffset := vk.DeviceSize(0)
 		vk.CmdBindVertexBuffers(cb, 0, 1, &vertexBuffer, &vertexOffset)
-		vk.CmdDraw(cb, chunk.totalPoints, 1, 0, 0)
+		vk.CmdDraw(cb, chunk.totalOpaquePoints, 1, 0, 0)
 	}
 }
 chunks_destroy :: proc() {
@@ -702,15 +733,9 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 
 	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 		if chunk.buffers.vertices[i].alloc != {} {
-			vma.destroy_buffer(
-				vkh.allocator,
-				chunk.buffers.vertices[i].buffer,
-				chunk.buffers.vertices[i].alloc,
-			)
+			vma.destroy_buffer(vkh.allocator, chunk.buffers.vertices[i].buffer, chunk.buffers.vertices[i].alloc)
 			chunk.buffers.vertices[i] = {}
 		}
-
-
 	}
 	chunk_geometry_calc_buffers_destroy(chunk)
 
@@ -718,5 +743,7 @@ chunk_destroy :: proc(chunk: ^Chunk) {
 
 	free_all(chunk.alloc)
 	chunk.pos = {}
-	chunk.totalPoints = 0
+	chunk.totalOpaquePoints = 0
+	chunk.totalTransparentPoints = 0
+
 }

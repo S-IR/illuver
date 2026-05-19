@@ -8,13 +8,14 @@ cbuffer CameraUBO {
 
 [[vk::binding(1, 0)]]
 cbuffer SunUBO {
-  float4 sunWorldPos;
-  float4 sunColor;
-  float4x4 lightVP;
+    float4x4 lightVP[4];
+    float4   sunWorldPos;
+    float4   sunColor;
+    float4   cascadeSplits;
 }
 
 [[vk::binding(2, 0)]]
-Sampler2DShadow shadowMap;
+Sampler2DArrayShadow shadowMap;
 
 struct PushConstants {
   uint isPointPass;
@@ -35,7 +36,6 @@ struct VertexOutput {
   nointerpolation float4 color : COLOR0;
   float3 normal : NORMAL0;
   float3 worldPos : TEXCOORD1;
-  float4 shadowCoord : TEXCOORD2;
 };
 
 [shader("vertex")]
@@ -45,14 +45,9 @@ VertexOutput vertexMain(VertexInput input) {
   float4 viewPos = mul(view, float4(input.position, 1.0));
   output.position = mul(proj, viewPos);
   float4 baseCol = pointFinalColor(uint16_t(input.pointVal));
-  int3 voxelPos = int3(round(input.position));
-  uint h = uint(voxelPos.x) * 0x9e3779b9u ^ uint(voxelPos.y) * 0x85ebca6bu ^ uint(voxelPos.z) * 0xd2a98b26u;
-  h = (h ^ (h >> 16)) * 0x45d9f3bu;
-  float var = float(h & 0xFFu) / 255.0 * 0.14 - 0.07;
-  output.color = float4(clamp(baseCol.rgb * (1.0 + var), 0.0, 1.0), 1.0);
+  output.color = baseCol;
   output.normal = input.normal;
 
-  output.shadowCoord = mul(lightVP, float4(input.position, 1.0));
   return output;
 }
 
@@ -61,9 +56,17 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   if (pc.isPointPass != 0) {
     return float4(0.0, 0.0, 0.0, 1.0);
   }
-  float2 uv = (input.shadowCoord.xy / input.shadowCoord.w) * 0.5 + 0.5;
-  float depth = input.shadowCoord.z / input.shadowCoord.w;
-  float shadow = shadowMap.SampleCmp(uv, depth - 0.005);
+  float3 fragViewPos = mul(view, float4(input.worldPos, 1.0)).xyz;
+  float depthVS = -fragViewPos.z;
+  int cascade = 3;
+  if      (depthVS < cascadeSplits.x) cascade = 0;
+  else if (depthVS < cascadeSplits.y) cascade = 1;
+  else if (depthVS < cascadeSplits.z) cascade = 2;
+
+  float4 shadowCoord = mul(lightVP[cascade], float4(input.worldPos, 1.0));
+  float2 uv = (shadowCoord.xy / shadowCoord.w) * 0.5 + 0.5;
+  float depth = shadowCoord.z / shadowCoord.w;
+  float  shadow = shadowMap.SampleCmp(float3(uv, float(cascade)), depth - 0.005);
 
   float3 surfaceColor = input.color.xyz;
 
@@ -98,5 +101,5 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   // ACES filmic tonemapping
   float3 x = hdrColor;
   float3 mapped = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-  return float4(mapped, 1.0);
+  return float4(mapped, input.color.w);
 }

@@ -1,13 +1,12 @@
 import "point.imported.slang";
 
+
 [[vk::binding(0, 0)]]
-ByteAddressBuffer pointsBuffer; // point types
+ByteAddressBuffer pointsBuffer;
 [[vk::binding(1, 0)]]
-RWByteAddressBuffer vertsOut; // float3 + u32 (point type padded)
-// [[vk::binding(2, 0)]] RWByteAddressBuffer colorsOut; // vec4 array (16 bytes
-// per element)
+RWByteAddressBuffer vertsOut;
 [[vk::binding(2, 0)]]
-RWByteAddressBuffer counter; // uint vertexCount
+RWByteAddressBuffer counter;
 [[vk::binding(3, 0)]]
 cbuffer ChunkInfo {
   int4 chunkMin;
@@ -21,8 +20,12 @@ static const int CUBES_PER_X_DIR = 15;
 static const int CUBES_PER_Y_DIR = 31;
 static const int CUBES_PER_Z_DIR = 15;
 static const int VERT_STRIDE_X = VERTS_PER_Z_DIR * VERTS_PER_Y_DIR;
-
 static const int VERT_STRIDE_Y = VERTS_PER_Z_DIR;
+
+static const uint VERTEX_STRIDE = 32;
+static const uint MAX_OPAQUE_VERTS = uint(CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36);
+static const uint TRANSPARENT_COUNTER_BYTE_OFFSET = 4;
+
 uint16_t getPoint(int3 cell) {
   if (cell.x < 0 || cell.x >= VERTS_PER_X_DIR)
     return uint16_t(PointType::Air);
@@ -33,22 +36,27 @@ uint16_t getPoint(int3 cell) {
   uint idx = cell.x * VERT_STRIDE_X + cell.y * VERT_STRIDE_Y + cell.z;
   return pointsBuffer.Load<uint16_t>(idx * 2);
 }
+
 float3 calculateJitter(int3 world) {
   uint h = uint(world.x) * 0x9e3779b9u + uint(world.y) * 0x85ebca6bu +
            uint(world.z) * 0x27d4eb2du + seed;
-
   h = (h ^ (h >> 13)) * 0x9e3779b9u;
-
   float fx = float(h & 0xFFFFu) * (1.0 / 65536.0) - 0.5;
   float fy = float((h >> 16) & 0xFFFFu) * (1.0 / 65536.0) - 0.5;
   float fz = float((h >> 24) & 0xFFu) * (1.0 / 256.0) - 0.5;
-
   return float3(fx, fy, fz) * 0.5;
 }
 
 float3 worldPosition(int3 local) {
   int3 world = chunkMin.xyz + local;
   return float3(world) + calculateJitter(world);
+}
+
+void writeVert(uint idx, float3 pos, float3 n, uint p) {
+  uint o = idx * VERTEX_STRIDE;
+  vertsOut.Store3(o,    asuint(pos));
+  vertsOut.Store3(o+12, asuint(n));
+  vertsOut.Store (o+24, p);
 }
 
 static const int3 triVerts[6][3] = {
@@ -73,7 +81,10 @@ static const int3 neighborOffsets[26] = {
 bool isSurrounded(int3 cell) {
   for (int i = 0; i < 26; i++) {
     int3 neighbour = cell + neighborOffsets[i];
-    if (getPointType(getPoint(neighbour)) == PointType::Air)
+    PointType neighbourPointType = getPointType(getPoint(neighbour));
+    if (neighbourPointType == PointType::Air)
+      return false;
+    if (isTransparentPoint(neighbourPointType))
       return false;
   }
   return true;
@@ -83,24 +94,16 @@ bool isSurrounded(int3 cell) {
 [numthreads(8, 8, 8)]
 void main(uint3 id: SV_DispatchThreadID) {
   int3 cell = int3(id);
-  // if (id.x == 0 && id.y == 0 && id.z == 0) {
-  //   // Store the first cell's point value into counter just to see it
-  //   counter.Store(0, uint(getPoint(int3(0, 0, 0))));
-  //   return; // then exit, to keep it simple
-  // }
 
   if (cell.x >= CUBES_PER_X_DIR || cell.y >= CUBES_PER_Y_DIR ||
       cell.z >= CUBES_PER_Z_DIR)
     return;
 
-  uint16_t p000 = getPoint(cell);
-  if (getPointType(p000) == PointType::Air) {
+  if (getPointType(getPoint(cell)) == PointType::Air)
     return;
-  }
 
-  if (isSurrounded(cell)) {
+  if (isSurrounded(cell))
     return;
-  }
 
   for (int t = 0; t < 6; t++) {
     int3 v0 = triVerts[t][0];
@@ -111,55 +114,36 @@ void main(uint3 id: SV_DispatchThreadID) {
     uint16_t p1 = getPoint(cell + v1);
     uint16_t p2 = getPoint(cell + v2);
 
-    if (getPointType(p0) == PointType::Air ||
-        getPointType(p1) == PointType::Air ||
-        getPointType(p2) == PointType::Air)
+    PointType p0pt = getPointType(p0);
+    PointType p1pt = getPointType(p1);
+    PointType p2pt = getPointType(p2);
+
+    if (p0pt == PointType::Air || p1pt == PointType::Air || p2pt == PointType::Air)
       continue;
 
+    // bool isTransparent = isTransparentPoint(p0pt) || isTransparentPoint(p1pt) || isTransparentPoint(p2pt);
+    bool isTransparent = false;
+
     uint vIdx;
-    counter.InterlockedAdd(0, 3, vIdx);
+    if (!isTransparent) {
+      counter.InterlockedAdd(0, 6, vIdx);
+    } else {
+      counter.InterlockedAdd(TRANSPARENT_COUNTER_BYTE_OFFSET, 6, vIdx);
+      vIdx += MAX_OPAQUE_VERTS;
+    }
 
     float3 pos0 = worldPosition(cell + v0);
     float3 pos1 = worldPosition(cell + v1);
     float3 pos2 = worldPosition(cell + v2);
 
-    float3 normal = normalize(cross(pos1 - pos0, pos2 - pos0));
+    float3 n1 = normalize(cross(pos1 - pos0, pos2 - pos0));
+    float3 n2 = normalize(cross(pos2 - pos0, pos1 - pos0));
 
-    uint offset = vIdx * 32;
-
-    // Vertex 0
-    vertsOut.Store3(offset + 0, asuint(pos0));
-    vertsOut.Store3(offset + 12, asuint(normal));
-    vertsOut.Store(offset + 24, uint(p0));
-    // offset+28 is padding – leave as zero (no need to write)
-
-    // Vertex 1
-    vertsOut.Store3(offset + 32, asuint(pos1));
-    vertsOut.Store3(offset + 44, asuint(normal));
-    vertsOut.Store(offset + 56, uint(p1));
-
-    // Vertex 2
-    vertsOut.Store3(offset + 64, asuint(pos2));
-    vertsOut.Store3(offset + 76, asuint(normal));
-    vertsOut.Store(offset + 88, uint(p2));
-
-    counter.InterlockedAdd(0, 3, vIdx);
-    normal = normalize(cross(pos2 - pos0, pos1 - pos0));
-    offset = vIdx * 32;
-
-    // Vertex 3
-    vertsOut.Store3(offset + 0, asuint(pos0));
-    vertsOut.Store3(offset + 12, asuint(normal));
-    vertsOut.Store(offset + 24, uint(p0));
-
-    // Vertex 4
-    vertsOut.Store3(offset + 32, asuint(pos2));
-    vertsOut.Store3(offset + 44, asuint(normal));
-    vertsOut.Store(offset + 56, uint(p2));
-
-    // Vertex 5
-    vertsOut.Store3(offset + 64, asuint(pos1));
-    vertsOut.Store3(offset + 76, asuint(normal));
-    vertsOut.Store(offset + 88, uint(p1));
+    writeVert(vIdx+0, pos0, n1, uint(p0));
+    writeVert(vIdx+1, pos1, n1, uint(p1));
+    writeVert(vIdx+2, pos2, n1, uint(p2));
+    writeVert(vIdx+3, pos0, n2, uint(p0));
+    writeVert(vIdx+4, pos2, n2, uint(p2));
+    writeVert(vIdx+5, pos1, n2, uint(p1));
   }
 }

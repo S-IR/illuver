@@ -132,9 +132,19 @@ float3 baseColor(PointType type) {
     return float3(0.0);
   }
 }
+bool isTransparentPoint(PointType type) {
+    switch (type) {
+        case PointType::Water:
+        return true;
+        default:
+        return false;
+    };
+    return false;
+}
 export float4 pointFinalColor(uint16_t point) {
   float3 base = baseColor(getPointType(point));
   float3 energy = energyToColor(point);
   float3 combined = base * 0.9 + energy * 0.1;
-  return float4(combined, 1.0);
+  float alpha = (getPointType(point) == PointType::Water) ?  1.0: 1.0;
+  return float4(combined, alpha);
 }

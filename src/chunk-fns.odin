@@ -46,27 +46,33 @@ CUBES_PER_Z_DIR: i32 : VERTS_PER_Z_DIR - 1
 
 CHUNK_HEIGHTMAP_SIZE :: VERTS_PER_X_DIR * VERTS_PER_Z_DIR
 NUM_WORKER_THREADS := 4
+MAX_OPAQUE_VERTS :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
+MAX_TRANSPARENT_VERTS :: MAX_OPAQUE_VERTS
+VERTEX_BUFFER_SIZE :: (MAX_OPAQUE_VERTS + MAX_TRANSPARENT_VERTS) * size_of(PointVertexInput)
+
 Chunk :: struct {
-	points:            [VERTS_PER_X_DIR * VERTS_PER_Y_DIR * VERTS_PER_Z_DIR]u16,
-	heightMap:         [CHUNK_HEIGHTMAP_SIZE]i32,
-	buffers:           struct {
+	points:                                    [VERTS_PER_X_DIR *
+	VERTS_PER_Y_DIR *
+	VERTS_PER_Z_DIR]u16,
+	heightMap:                                 [CHUNK_HEIGHTMAP_SIZE]i32,
+	buffers:                                   struct {
 		vertices: [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
-		// indices:      [vkh.MAX_FRAMES_IN_FLIGHT]vkh.VkBufferPoolElem,
 		compute:  struct {
-			pointsInput:     vkh.BufferAlloc, // u16 input (uploaded when dirty)
-			counter:         vkh.BufferAlloc, // atomic counters (3x u32)
+			pointsInput:     vkh.BufferAlloc,
+			counter:         vkh.BufferAlloc,
 			uniform:         vkh.BufferAlloc,
 			stagingVertices: vkh.BufferAlloc,
 		},
 	},
-	copyTimelineValue: [vkh.MAX_FRAMES_IN_FLIGHT]u64,
-	pos:               [3]i32,
-	pendingUpload:     [vkh.MAX_FRAMES_IN_FLIGHT]b32,
-	mutex:             sync.RW_Mutex,
-	totalPoints:       u32,
-	arena:             virtual.Arena,
-	alloc:             mem.Allocator,
-	dirty:             bool,
+	copyTimelineValue:                         [vkh.MAX_FRAMES_IN_FLIGHT]u64,
+	pos:                                       [3]i32,
+	pendingUpload:                             [vkh.MAX_FRAMES_IN_FLIGHT]b32,
+	mutex:                                     sync.RW_Mutex,
+	totalOpaquePoints,
+	totalTransparentPoints: u32,
+	arena:                                     virtual.Arena,
+	alloc:                                     mem.Allocator,
+	dirty:                                     bool,
 }
 
 
@@ -124,7 +130,6 @@ MAX_POINTS_INT :: int(MAX_POINTS)
 MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
 MAX_COLORS :: MAX_INDICES
 INDEX_TYPE_USED_IN_CHUNKS :: u32
-CHUNK_GPU_VERTEX_BUFFER_SIZE :: MAX_INDICES * (size_of([4]f32) + size_of([4]f32))
 chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool, prev: u16) {
 
 	worldPosI32 := linalg.to_i32(linalg.round(worldPos))

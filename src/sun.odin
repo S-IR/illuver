@@ -8,9 +8,10 @@ import "gs"
 import vk "vendor:vulkan"
 import "vkh"
 
+CSM_CASCADE_COUNT :: 4
 SunUBO :: struct {
-	worldPos, color: [4]f32,
-	lightVP:         matrix[4, 4]f32,
+	lightVP:                        [CSM_CASCADE_COUNT]matrix[4, 4]f32,
+	worldPos, color, cascadeSplits: [4]f32,
 }
 
 SHADOW_MAP_SIZE :: 4098
@@ -20,10 +21,11 @@ SunRenderData :: struct {
 	uboBuffers:        [vkh.MAX_FRAMES_IN_FLIGHT]vkh.BufferAlloc,
 	ubo:               SunUBO,
 	shadow:            struct {
-		image:    vkh.ImageAlloc,
-		view:     vk.ImageView,
-		sampler:  vk.Sampler,
-		pipeline: vkh.PipelineData,
+		image:      vkh.ImageAlloc,
+		layerViews: [CSM_CASCADE_COUNT]vk.ImageView,
+		arrayView:  vk.ImageView,
+		sampler:    vk.Sampler,
+		pipeline:   vkh.PipelineData,
 	},
 }
 SunPC :: struct {
@@ -229,7 +231,7 @@ sun_init :: proc() -> (d: SunRenderData) {
 				format = .D32_SFLOAT,
 				extent = {width = SHADOW_MAP_SIZE, height = SHADOW_MAP_SIZE, depth = 1},
 				mipLevels = 1,
-				arrayLayers = 1,
+				arrayLayers = CSM_CASCADE_COUNT,
 				samples = {._1},
 				tiling = .OPTIMAL,
 				usage = {.DEPTH_STENCIL_ATTACHMENT, .SAMPLED},
@@ -240,18 +242,43 @@ sun_init :: proc() -> (d: SunRenderData) {
 			nil,
 		)
 		vma.set_allocation_name(vkh.allocator, d.shadow.image.alloc, "sun shadow image")
+
 		vk.CreateImageView(
 			vkh.device,
 			&{
 				sType = .IMAGE_VIEW_CREATE_INFO,
 				image = d.shadow.image.image,
-				viewType = .D2,
+				viewType = .D2_ARRAY,
 				format = .D32_SFLOAT,
-				subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
+				subresourceRange = {
+					aspectMask = {.DEPTH},
+					levelCount = 1,
+					layerCount = CSM_CASCADE_COUNT,
+				},
 			},
 			nil,
-			&d.shadow.view,
+			&d.shadow.arrayView,
 		)
+		for i in 0 ..< CSM_CASCADE_COUNT {
+			vk.CreateImageView(
+				vkh.device,
+				&{
+					sType = .IMAGE_VIEW_CREATE_INFO,
+					image = d.shadow.image.image,
+					viewType = .D2,
+					format = .D32_SFLOAT,
+					subresourceRange = {
+						aspectMask = {.DEPTH},
+						levelCount = 1,
+						baseArrayLayer = u32(i),
+						layerCount = 1,
+					},
+				},
+				nil,
+				&d.shadow.layerViews[i],
+			)
+		}
+
 
 		vk.CreateSampler(
 			vkh.device,
@@ -289,7 +316,10 @@ sun_init :: proc() -> (d: SunRenderData) {
 				&d.shadow.pipeline.descriptorSetLayout,
 			),
 		)
-
+		pushRange := vk.PushConstantRange {
+			stageFlags = {.VERTEX},
+			size       = size_of(u32),
+		}
 		vkh.chk(
 			vk.CreatePipelineLayout(
 				vkh.device,
@@ -297,6 +327,8 @@ sun_init :: proc() -> (d: SunRenderData) {
 					sType = .PIPELINE_LAYOUT_CREATE_INFO,
 					setLayoutCount = 1,
 					pSetLayouts = &d.shadow.pipeline.descriptorSetLayout,
+					pushConstantRangeCount = 1,
+					pPushConstantRanges = &pushRange,
 				},
 				nil,
 				&d.shadow.pipeline.layout,
@@ -429,7 +461,9 @@ sun_render_data_destroy :: proc(d: ^SunRenderData) {
 	vkh.pipeline_destroy(d.p)
 
 	vk.DestroySampler(vkh.device, d.shadow.sampler, nil)
-	vk.DestroyImageView(vkh.device, d.shadow.view, nil)
+	vk.DestroyImageView(vkh.device, d.shadow.arrayView, nil)
+	for view in d.shadow.layerViews do vk.DestroyImageView(vkh.device, view, nil)
+
 	vma.destroy_image(vkh.allocator, d.shadow.image.image, d.shadow.image.alloc)
 	vkh.pipeline_destroy(d.shadow.pipeline)
 
@@ -456,7 +490,8 @@ sun_ubo_update :: proc(ubo: ^SunUBO, time: f64, cameraPos: [3]f32) {
 		0.4 + 0.5 * angleNormalized,
 		1.5 * angleNormalized + 0.05,
 	}
-	ubo.lightVP = compute_light_vp(ubo.worldPos.xyz, cameraPos)
+	ubo.lightVP = compute_cascade_light_vps(ubo.worldPos.xyz, cameraPos)
+	ubo.cascadeSplits = CSM_SPLIT_DISTANCES
 	gs.clearColor = {
 		angleNormalized * 0.25,
 		angleNormalized * 0.40,

@@ -12,6 +12,9 @@ ComputeMeshUniforms :: struct {
 }
 chunkGeometryCalcPipeline: vkh.PipelineData
 
+ChunkComputeCounterElement :: struct {
+	totalOpaquePoints, totalTransparentPoints: u32,
+}
 chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 	bindings := [4]vk.DescriptorSetLayoutBinding {
 		{
@@ -19,19 +22,19 @@ chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 			descriptorType = .STORAGE_BUFFER,
 			descriptorCount = 1,
 			stageFlags = {.COMPUTE},
-		}, // points (u16[])
+		}, // points
 		{
 			binding = 1,
 			descriptorType = .STORAGE_BUFFER,
 			descriptorCount = 1,
 			stageFlags = {.COMPUTE},
-		}, // vertices
+		}, // verts
 		{
 			binding = 2,
 			descriptorType = .STORAGE_BUFFER,
 			descriptorCount = 1,
 			stageFlags = {.COMPUTE},
-		}, // atomic counter
+		}, // counter
 		{
 			binding = 3,
 			descriptorType = .UNIFORM_BUFFER,
@@ -122,7 +125,7 @@ chunk_geometry_calc_buffers_create :: proc(chunk: ^Chunk) {
 				vkh.allocator,
 				vk.BufferCreateInfo {
 					sType = .BUFFER_CREATE_INFO,
-					size = vk.DeviceSize(size_of(u32)),
+					size = vk.DeviceSize(size_of(ChunkComputeCounterElement)),
 					usage = {.STORAGE_BUFFER, .TRANSFER_DST},
 				},
 				{
@@ -162,7 +165,7 @@ chunk_geometry_calc_buffers_create :: proc(chunk: ^Chunk) {
 				vkh.allocator,
 				{
 					sType = .BUFFER_CREATE_INFO,
-					size = vk.DeviceSize(CHUNK_GPU_VERTEX_BUFFER_SIZE),
+					size = vk.DeviceSize(VERTEX_BUFFER_SIZE),
 					usage = {.STORAGE_BUFFER, .TRANSFER_SRC},
 				},
 				{usage = .Auto, flags = {.Mapped, .Host_Access_Sequential_Write}},
@@ -261,42 +264,42 @@ chunk_geometry_calculate :: proc(
 	vk.CmdBindPipeline(state.computeCB, .COMPUTE, pipeline.pipeline)
 
 	writes := [4]vk.WriteDescriptorSet {
-		{ 	// binding 0: pointsInput
-			sType           = .WRITE_DESCRIPTOR_SET,
-			dstBinding      = 0,
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 0,
 			descriptorCount = 1,
-			descriptorType  = .STORAGE_BUFFER,
-			pBufferInfo     = &vk.DescriptorBufferInfo {
+			descriptorType = .STORAGE_BUFFER,
+			pBufferInfo = &vk.DescriptorBufferInfo {
 				buffer = chunk.buffers.compute.pointsInput.buffer,
 				range = vk.DeviceSize(vk.WHOLE_SIZE),
 			},
 		},
-		{ 	// binding 1: stagingVertices
-			sType           = .WRITE_DESCRIPTOR_SET,
-			dstBinding      = 1,
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 1,
 			descriptorCount = 1,
-			descriptorType  = .STORAGE_BUFFER,
-			pBufferInfo     = &vk.DescriptorBufferInfo {
+			descriptorType = .STORAGE_BUFFER,
+			pBufferInfo = &vk.DescriptorBufferInfo {
 				buffer = chunk.buffers.compute.stagingVertices.buffer,
 				range = vk.DeviceSize(vk.WHOLE_SIZE),
 			},
 		},
-		{ 	// binding 3: counters
-			sType           = .WRITE_DESCRIPTOR_SET,
-			dstBinding      = 2,
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 2,
 			descriptorCount = 1,
-			descriptorType  = .STORAGE_BUFFER,
-			pBufferInfo     = &vk.DescriptorBufferInfo {
+			descriptorType = .STORAGE_BUFFER,
+			pBufferInfo = &vk.DescriptorBufferInfo {
 				buffer = chunk.buffers.compute.counter.buffer,
 				range = vk.DeviceSize(vk.WHOLE_SIZE),
 			},
 		},
-		{ 	// binding 4: uniform
-			sType           = .WRITE_DESCRIPTOR_SET,
-			dstBinding      = 3,
+		{
+			sType = .WRITE_DESCRIPTOR_SET,
+			dstBinding = 3,
 			descriptorCount = 1,
-			descriptorType  = .UNIFORM_BUFFER,
-			pBufferInfo     = &vk.DescriptorBufferInfo {
+			descriptorType = .UNIFORM_BUFFER,
+			pBufferInfo = &vk.DescriptorBufferInfo {
 				buffer = chunk.buffers.compute.uniform.buffer,
 				range = vk.DeviceSize(vk.WHOLE_SIZE),
 			},
@@ -360,44 +363,44 @@ chunk_geometry_calculate :: proc(
 
 	countersPtr: rawptr
 	vma.map_memory(vkh.allocator, chunk.buffers.compute.counter.alloc, &countersPtr)
-	counts := (^u32)(countersPtr)
-	chunk.totalPoints = counts^
+	counts := (^ChunkComputeCounterElement)(countersPtr)
+	chunk.totalOpaquePoints = counts.totalOpaquePoints
+	assert(chunk.totalOpaquePoints <= u32(MAX_OPAQUE_VERTS), "opaque vertex overflow")
+	chunk.totalTransparentPoints = counts.totalTransparentPoints
+	assert(chunk.totalTransparentPoints <= u32(MAX_TRANSPARENT_VERTS), "transparent vertex overflow")
+
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
+
 }
 chunk_copy_current_to_other_frames :: proc(
 	chunk: ^Chunk,
 	state: ^ChunkWorkerState,
 	currentFrame: u32,
 ) {
-	if chunk.totalPoints == 0 do return
+	if chunk.totalOpaquePoints == 0 && chunk.totalTransparentPoints == 0 do return
 	vk.ResetCommandBuffer(state.computeCB, {})
 	vk.BeginCommandBuffer(
 		state.computeCB,
 		&vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
 	)
 
-	srcVert := chunk.buffers.compute.stagingVertices.buffer
-	copySizeVert := vk.DeviceSize(CHUNK_GPU_VERTEX_BUFFER_SIZE)
-
 	barriers: [vkh.MAX_FRAMES_IN_FLIGHT]vk.BufferMemoryBarrier
 
-	for &barrier, i in barriers {
+	for i in 0 ..< vkh.MAX_FRAMES_IN_FLIGHT {
 		vk.CmdCopyBuffer(
 			state.computeCB,
-			srcVert,
+			chunk.buffers.compute.stagingVertices.buffer,
 			chunk.buffers.vertices[i].buffer,
 			1,
-			&vk.BufferCopy{size = copySizeVert},
+			&vk.BufferCopy{size = vk.DeviceSize(VERTEX_BUFFER_SIZE)},
 		)
-
-		barrier = {
+		barriers[i] = {
 			sType         = .BUFFER_MEMORY_BARRIER,
 			srcAccessMask = {.TRANSFER_WRITE},
 			dstAccessMask = {.VERTEX_ATTRIBUTE_READ},
 			buffer        = chunk.buffers.vertices[i].buffer,
 			size          = vk.DeviceSize(vk.WHOLE_SIZE),
 		}
-
 	}
 
 	vk.CmdPipelineBarrier(
