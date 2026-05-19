@@ -365,7 +365,7 @@ chunk_geometry_calculate :: proc(
 	chunk.pointTotal = counts^
 
 	//TODO: have some ductape here in emergy case that the transparent buffer is too small
-	ensure(chunk.pointTotal.opaque <= u32(MAX_OPAQUE_VERTS))
+	ensure(chunk.pointTotal.opaque <= u32(MAX_OPAQUE_POINTS))
 	ensure(chunk.pointTotal.transparent <= u32(MAX_TRANSPARENT_POINTS))
 
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)

@@ -24,7 +24,7 @@ static const int VERT_STRIDE_Y = VERTS_PER_Z_DIR;
 static const uint VERTEX_STRIDE = 32;
 
 //CHANGE IN ODIN WHEN CHANGING HERE AND VICE VERSA
-static const uint MAX_OPAQUE_POINTS = CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36;
+static const uint MAX_OPAQUE_POINTS = CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 18;
 static const uint MAX_TRANSPARENT_POINTS = MAX_OPAQUE_POINTS / 4;
 
 uint16_t getPoint(int3 cell) {
@@ -142,10 +142,11 @@ void main(uint3 id: SV_DispatchThreadID) {
 
 
     uint vIdx;
+    static uint INTERLOCKED_AMOUNT = 3;
     if (!isTransparent) {
-      counter.InterlockedAdd(0, 6, vIdx);
+      counter.InterlockedAdd(0, INTERLOCKED_AMOUNT, vIdx);
     } else {
-      counter.InterlockedAdd(4, 6, vIdx);
+      counter.InterlockedAdd(4, INTERLOCKED_AMOUNT, vIdx);
       vIdx += MAX_OPAQUE_POINTS;
     }
 
@@ -156,9 +157,9 @@ void main(uint3 id: SV_DispatchThreadID) {
     writeVert(offset + 1 * VERTEX_STRIDE, pos1, n1, uint(p1));
     writeVert(offset + 2 * VERTEX_STRIDE, pos2, n1, uint(p2));
 
-    float3 n2 = normalize(cross(pos2 - pos0, pos1 - pos0));
-    writeVert(offset + 3 * VERTEX_STRIDE, pos0, n2, uint(p0));
-    writeVert(offset + 4 * VERTEX_STRIDE, pos2, n2, uint(p2));
-    writeVert(offset + 5 * VERTEX_STRIDE, pos1, n2, uint(p1));
+    // float3 n2 = normalize(cross(pos2 - pos0, pos1 - pos0));
+    // writeVert(offset + 3 * VERTEX_STRIDE, pos0, n2, uint(p0));
+    // writeVert(offset + 4 * VERTEX_STRIDE, pos2, n2, uint(p2));
+    // writeVert(offset + 5 * VERTEX_STRIDE, pos1, n2, uint(p1));
   }
 }

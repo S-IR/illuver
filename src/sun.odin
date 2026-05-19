@@ -385,7 +385,7 @@ sun_init :: proc() -> (d: SunRenderData) {
 					},
 					pRasterizationState = &{
 						sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-						cullMode = {.FRONT},
+						cullMode = {},
 						frontFace = .COUNTER_CLOCKWISE,
 						depthBiasConstantFactor = 2.0,
 						depthBiasSlopeFactor = 1.5,

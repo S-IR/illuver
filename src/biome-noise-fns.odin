@@ -82,7 +82,7 @@ crystalbloom_point_type :: proc(
 	assert(topY >= worldXYZ.y)
 	diffY := topY - worldXYZ.y
 
-	WATER_LEVEL :: 0
+	// WATER_LEVEL :: 0
 	if diffY < 3 {
 		// heightMap[index_into_height_map(index.xz)] = worldXYZ.y + 1
 		points[index_into_point_arrays(index)] = u16(PointType.Water)

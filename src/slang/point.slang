@@ -83,7 +83,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   float attenuation = 1.0;
 
   float3 normal = normalize(input.normal);
-  float diff = max(dot(lightDir, normal), 0.0);
+  if (dot(normal, lightDir) < 0.0) normal = -normal;
+  float diff = dot(normal, lightDir);
   float3 diffuse = diff * surfaceColor * sunColor.rgb * attenuation;
 
   float3 cameraPos = -mul(view[3].xyz, (float3x3)view);
@@ -92,10 +93,10 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   float spec = 0.0;
   if (diff > 0.0) {
     float3 halfwayDir = normalize(lightDir + viewDir);
-    float sunSpecularStr = 48.0;
+    float sunSpecularStr = 16.0;
     spec = pow(max(dot(normal, halfwayDir), 0.0), sunSpecularStr);
   }
-  float3 specular = spec * 0.3 * sunColor.xyz * attenuation;
+  float3 specular = spec * 1.0 * sunColor.xyz * attenuation;
 
   float3 hdrColor = ambient + shadow * (diffuse + specular);
   // ACES filmic tonemapping
