@@ -59,7 +59,7 @@ when ODIN_DEBUG && ENABLE_SPALL {
 }
 TRACY_ENABLE :: false
 
-DEBUG_MODE_IGNORE_SAVE :: true && ODIN_DEBUG
+DEBUG_MODE_IGNORE_SAVE :: false && ODIN_DEBUG
 main :: proc() {
 
 	when TRACY_ENABLE {

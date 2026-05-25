@@ -162,6 +162,7 @@ chunks_init :: proc(c: ^camera.Camera) {
 
 	}
 	sync.wait(&chunkWorkersWG)
+	flush_irrf_dirty_queue()
 
 	// ChunkAtTheCenter = rc(half, half).pos
 

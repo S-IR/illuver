@@ -170,6 +170,7 @@ chunks_frame_update :: proc(c: ^camera.Camera) {
 	}
 
 	sync.wait(&chunkWorkersWG)
+	flush_irrf_dirty_queue()
 	chunks_shift_per_player_movement(c)
 }
 chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {

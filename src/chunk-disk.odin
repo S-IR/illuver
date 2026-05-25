@@ -76,6 +76,8 @@ MAX_IRRFS_IN_MEMORY := 36
 IRRFCacheMutex: sync.RW_Mutex
 IRRFCache: lru.Cache([3]i32, InMemoryIRRF)
 
+irrfDirtyQueue: small_array.Small_Array(36, [3]i32)
+irrfDirtyMutex: sync.Mutex
 
 IRRFNextFreeIndex := 0
 
@@ -180,7 +182,6 @@ irrf_init_chunk :: proc(
 		defer sync.unlock(&irrfFile.mutex)
 
 
-		nextIdx := 0
 		assert(irrfPos.x <= pos.x)
 		assert(irrfPos.y <= pos.y)
 		assert(irrfPos.z <= pos.z)
@@ -193,31 +194,9 @@ irrf_init_chunk :: proc(
 		irrfFile.data[indexIntoIrrfScalar].points = points^
 		irrfFile.data[indexIntoIrrfScalar].heightmap = heightmap^
 		irrfFile.initialized[indexIntoIrrfScalar] = true
-
-
-		tempPath := fmt.tprintf("%s.tmp", irrfFile.path)
-		tempHandle, err := os.create(tempPath)
-		// defer _ = os.remove(tempPath)
-		ensure(err == nil)
-
-
-		_, err = os.write(tempHandle, mem.slice_to_bytes(irrfFile.initialized[:]))
-		ensure(err == nil)
-
-
-		dataBytes := mem.slice_to_bytes(irrfFile.data[:])
-		irrf_compress_to_file(tempHandle, dataBytes)
-
-		if irrfFile.handle != nil {
-			err = os.close(irrfFile.handle)
-			ensure(err == nil)
-		}
-		err = os.rename(tempPath, irrfFile.path)
-		ensure(err == nil)
-
-		irrfFile.handle = tempHandle
 	}
 
+	irrf_mark_dirty(irrfPos)
 }
 irrf_get_chunk :: proc(
 	pos: [3]i32,
@@ -304,6 +283,48 @@ irrf_get_chunk :: proc(
 
 irrf_cache_on_remove :: proc(key: [3]i32, value: InMemoryIRRF, user_data: rawptr) {
 	os.close(value.handle)
+}
+
+write_irrf_to_disk :: proc(irrfFile: ^InMemoryIRRF) {
+	tempPath := fmt.tprintf("%s.tmp", irrfFile.path)
+	tempHandle, err := os.create(tempPath)
+	ensure(err == nil)
+
+	_, err = os.write(tempHandle, mem.slice_to_bytes(irrfFile.initialized[:]))
+	ensure(err == nil)
+
+	irrf_compress_to_file(tempHandle, mem.slice_to_bytes(irrfFile.data[:]))
+
+	if irrfFile.handle != nil {
+		err = os.close(irrfFile.handle)
+		ensure(err == nil)
+	}
+	err = os.rename(tempPath, irrfFile.path)
+	ensure(err == nil)
+	irrfFile.handle = tempHandle
+}
+
+irrf_mark_dirty :: proc(irrfPos: [3]i32) {
+	sync.mutex_lock(&irrfDirtyMutex)
+	defer sync.mutex_unlock(&irrfDirtyMutex)
+	for i in 0 ..< small_array.len(irrfDirtyQueue) {
+		if small_array.get(irrfDirtyQueue, i) == irrfPos do return
+	}
+	small_array.append(&irrfDirtyQueue, irrfPos)
+}
+
+flush_irrf_dirty_queue :: proc() {
+	for i in 0 ..< small_array.len(irrfDirtyQueue) {
+		irrfPos := small_array.get(irrfDirtyQueue, i)
+		sync.shared_lock(&IRRFCacheMutex)
+		irrfFile, inCache := lru.get_ptr(&IRRFCache, irrfPos)
+		sync.shared_unlock(&IRRFCacheMutex)
+		if !inCache do continue
+		sync.lock(&irrfFile.mutex)
+		write_irrf_to_disk(irrfFile)
+		sync.unlock(&irrfFile.mutex)
+	}
+	small_array.clear(&irrfDirtyQueue)
 }
 irrf_compress_to_file :: proc(handle: ^os.File, data: []byte) {
 	bound := lz4.compressBound(i32(len(data)))
