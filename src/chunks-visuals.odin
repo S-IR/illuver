@@ -368,14 +368,15 @@ chunk_init :: proc(chunk: ^Chunk, pos: [3]i32, state: ^ChunkWorkerState) {
 	chunk_create_gpu_geometry(chunk, state, vkh.frameIndex)
 
 }
-U32_INVALID :: u32(0xFFFFFFFF)
 
 chunk_create_gpu_geometry :: proc(chunk: ^Chunk, state: ^ChunkWorkerState, frameIndex: u32) {
 	tracy.Zone()
 
 	//I have no clue why it infinitely stalls when the array is air. but even if it did not we should stop doing the math for empty chunks
 	if chunk.points == {} do return
-	chunk_geometry_calculate(chunk, state, chunkGeometryCalcPipeline)
+	// chunk_geometry_calculate(chunk, state, chunkGeometryCalcPipeline)
+	chunk_geometry_calculate_cpu(chunk)
+
 	chunk_copy_current_to_other_frames(chunk, state, frameIndex)
 
 }

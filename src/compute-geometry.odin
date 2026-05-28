@@ -2,7 +2,9 @@ package main
 import "../modules/tracy"
 import "../modules/vma"
 import "core:fmt"
+import "core:math/linalg"
 import "core:mem"
+import "core:simd"
 import "core:sync"
 import "gs"
 import vk "vendor:vulkan"
@@ -417,12 +419,207 @@ chunk_geometry_calculate :: proc(
 	vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
 
 }
+chunk_geometry_calculate_cpu :: proc(chunk: ^Chunk) {
+	tracy.Zone()
+	if chunk.points == {} do return
+	vertexMapper: [MAX_VERTS]u32 = ---
+	mem.set(
+		raw_data(mem.slice_to_bytes(vertexMapper[:])),
+		0xFF,
+		len(vertexMapper) * size_of(vertexMapper[0]),
+	)
+
+	vertsPtr, indicesPtr, counterPtr: rawptr
+	vma.map_memory(vkh.allocator, chunk.buffers.compute.stagingVertices.alloc, &vertsPtr)
+	vma.map_memory(vkh.allocator, chunk.buffers.compute.stagingIndices.alloc, &indicesPtr)
+	vma.map_memory(vkh.allocator, chunk.buffers.compute.counter.alloc, &counterPtr)
+	defer {
+		vma.unmap_memory(vkh.allocator, chunk.buffers.compute.stagingVertices.alloc)
+		vma.unmap_memory(vkh.allocator, chunk.buffers.compute.stagingIndices.alloc)
+		vma.unmap_memory(vkh.allocator, chunk.buffers.compute.counter.alloc)
+	}
+	verts := mem.slice_ptr((^PointVertexInput)(vertsPtr), int(MAX_VERTS))
+	indices := mem.slice_ptr((^INDEX_TYPE_USED_IN_CHUNKS)(indicesPtr), int(MAX_INDICES))
+	counts := (^ChunkComputeCounterElement)(counterPtr)
+	counts^ = {}
+	vertCount: u32 = 0
+
+	pts := raw_data(chunk.points[:])
+	seed := u32(gs.seed)
+	cmin := chunk.pos
+	get_pt :: #force_inline proc "contextless" (pts: [^]u16, c: [3]i32) -> u16 {
+		if c.x < 0 || c.x >= VERTS_PER_X_DIR do return 0
+		if c.y < 0 || c.y >= VERTS_PER_Y_DIR do return 0
+		if c.z < 0 || c.z >= VERTS_PER_Z_DIR do return 0
+		#no_bounds_check {
+			return pts[c.x * VERT_STRIDE_X + c.y * VERT_STRIDE_Y + c.z]
+		}
+	}
+	U32_INVALID :: u32(0xFFFFFFFF)
+	get_or_add :: proc(
+		mapper: []INDEX_TYPE_USED_IN_CHUNKS,
+		verts: []PointVertexInput,
+		vertCount: ^u32,
+		local: [3]i32,
+		cmin: [3]i32,
+		pointVal: u16,
+		seed: u32,
+	) -> u32 {
+		#no_bounds_check {
+			cellIdx := index_into_point_arrays(local)
+			if mapper[index_into_point_arrays(local)] != U32_INVALID do return mapper[cellIdx]
+			w := cmin + local
+
+			finalCoord := point_real_world_position(linalg.to_f32(w))
+
+			verts[vertCount^] = {
+				pos      = finalCoord,
+				pointVal = u32(pointVal),
+			}
+			currIdx := vertCount^
+			mapper[cellIdx] = currIdx
+
+			vertCount^ += 1
+			return currIdx
+		}
+
+	}
+
+	cell := [3]i32{0, 0, 0}
+	vertexMapperSlice := vertexMapper[:]
+
+	#no_bounds_check for cell.x = 0; cell.x < CUBES_PER_X_DIR; cell.x += 1 {
+		isEdgeX := cell.x == 0 || cell.x == CUBES_PER_X_DIR - 1
+
+		for cell.z = 0; cell.z < CUBES_PER_Z_DIR; cell.z += 1 {
+			isEdgeZ := cell.z == 0 || cell.z == CUBES_PER_Z_DIR - 1
+			xzIdx := index_into_height_map(cell.xz)
+			height := chunk.heightMap[xzIdx]
+			cellIter: for cell.y = 0; (cell.y + chunk.pos.y) < height; cell.y += 1 {
+
+				baseIndex := index_into_point_arrays(cell)
+				pVal := pts[index_into_point_arrays(cell)]
+				if pVal == 0 do continue
+
+				isEdgeY := cell.y == 0 || (cell.y + chunk.pos.y == height - 1)
+
+				isChunkEdge := isEdgeX || isEdgeY || isEdgeZ
+				cellType := u16_to_point_type(pVal)
+
+
+				typeMask8 := #simd[8]u16 {
+					TYPE_MASK,
+					TYPE_MASK,
+					TYPE_MASK,
+					TYPE_MASK,
+					TYPE_MASK,
+					TYPE_MASK,
+					TYPE_MASK,
+					TYPE_MASK,
+				}
+				airSimd8 := #simd[8]u16{}
+				waterSimd8 := #simd[8]u16 {
+					u16(PointType.Water),
+					u16(PointType.Water),
+					u16(PointType.Water),
+					u16(PointType.Water),
+					u16(PointType.Water),
+					u16(PointType.Water),
+					u16(PointType.Water),
+					u16(PointType.Water),
+				}
+
+				checkForSkipRender: if !isChunkEdge {
+					for p in pointsSimdNeighbors {
+						ni := baseIndex + p
+						neighbour := #simd[8]u16 {
+							pts[simd.extract(ni, 0)],
+							pts[simd.extract(ni, 1)],
+							pts[simd.extract(ni, 2)],
+							pts[simd.extract(ni, 3)],
+							pts[simd.extract(ni, 4)],
+							pts[simd.extract(ni, 5)],
+							pts[simd.extract(ni, 6)],
+							pts[simd.extract(ni, 7)],
+						}
+						typeVals := neighbour & typeMask8
+
+						airEqMask := simd.lanes_eq(typeVals, airSimd8)
+						anyAir := simd.reduce_or(airEqMask) != 0
+						if anyAir do break checkForSkipRender
+
+						waterEqMask := simd.lanes_eq(typeVals, waterSimd8)
+						anyWater := simd.reduce_or(waterEqMask) != 0
+						if anyWater do break checkForSkipRender
+
+					}
+					lVal := pts[baseIndex + pointsNeighbourLeftCoords]
+					rVal := pts[baseIndex + pointsNeighbourRightCoords]
+					lType, rType := u16_to_point_type(lVal), u16_to_point_type(rVal)
+					if lType == .Air || is_transparent_point(lType) do break checkForSkipRender
+					if rType == .Air || is_transparent_point(rType) do break checkForSkipRender
+
+					continue cellIter
+
+				}
+
+				triVerts := [6][3][3]i32 {
+					{{0, 0, 0}, {1, 1, 0}, {1, 0, 0}},
+					{{0, 0, 0}, {0, 1, 0}, {1, 1, 0}},
+					{{0, 0, 0}, {0, 0, 1}, {0, 1, 1}},
+					{{0, 0, 0}, {0, 1, 1}, {0, 1, 0}},
+					{{0, 0, 0}, {1, 0, 0}, {1, 0, 1}},
+					{{0, 0, 0}, {1, 0, 1}, {0, 0, 1}},
+				}
+
+				for tri in triVerts {
+					c0, c1, c2 := cell + tri[0], cell + tri[1], cell + tri[2]
+					p0, p1, p2 := get_pt(pts, c0), get_pt(pts, c1), get_pt(pts, c2)
+					t0, t1, t2 :=
+						u16_to_point_type(p0), u16_to_point_type(p1), u16_to_point_type(p2)
+
+					if t0 == .Air || t1 == .Air || t2 == .Air do continue
+					tc :=
+						(is_transparent_point(t0) ? 1 : 0) +
+						(is_transparent_point(t1) ? 1 : 0) +
+						(is_transparent_point(t2) ? 1 : 0)
+
+					if tc > 0 && tc < 3 do continue
+					isTransp := tc == 3
+
+					i0 := get_or_add(vertexMapperSlice, verts, &vertCount, c0, cmin, p0, seed)
+					i1 := get_or_add(vertexMapperSlice, verts, &vertCount, c1, cmin, p1, seed)
+					i2 := get_or_add(vertexMapperSlice, verts, &vertCount, c2, cmin, p2, seed)
+
+					if !isTransp {
+						iIdx := counts.opaque
+						indices[iIdx] = i0; indices[iIdx + 1] = i1; indices[iIdx + 2] = i2
+						counts.opaque += 3
+					} else {
+						iIdx := MAX_OPAQUE_INDICES + counts.transparent
+						indices[iIdx] = i0; indices[iIdx + 1] = i1; indices[iIdx + 2] = i2
+						counts.transparent += 3
+					}
+
+				}
+
+			}
+		}
+	}
+
+	chunk.pointTotal = counts^
+}
+
+
 chunk_copy_current_to_other_frames :: proc(
 	chunk: ^Chunk,
 	state: ^ChunkWorkerState,
 	currentFrame: u32,
 ) {
 	if chunk.pointTotal == {} do return
+	vk.WaitForFences(vkh.device, 1, &state.computeFence, true, max(u64))
+	vk.ResetFences(vkh.device, 1, &state.computeFence)
+
 	vk.ResetCommandBuffer(state.computeCB, {})
 	vk.BeginCommandBuffer(
 		state.computeCB,

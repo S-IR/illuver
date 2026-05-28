@@ -395,3 +395,6 @@ hash_i32 :: proc(x, y, z: i32, seed: u64) -> i32 {
 	h ~= h >> 31
 	return i32(h)
 }
+is_transparent_point :: #force_inline proc "contextless" (t: PointType) -> bool {
+	return t == .Water
+}

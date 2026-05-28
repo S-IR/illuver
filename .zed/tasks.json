@@ -2,7 +2,7 @@
   //build the VMA ON RELEASES MANUALLY
   {
     "label": "build-prod",
-    "command": "odin build src -out:build/prod.exe  -vet-shadowing -o:aggressive",
+    "command": "odin build src -out:build/prod.exe  -vet-shadowing -o:aggressive -define:TRACY_ENABLE=true -show-timings",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "reveal": "always",

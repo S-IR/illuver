@@ -72,8 +72,6 @@ pointSimdRightCoords := #simd[8]i32 {
 	index_into_point_arrays_vector_contextless({1, 1, 1}),
 }
 pointsNeighbourLeftCoords := index_into_point_arrays_vector_contextless({-1, 0, 0})
-
-
 pointsNeighbourRightCoords := index_into_point_arrays_vector_contextless({1, 0, 0})
 
 pointsSimdNeighbors := [3]#simd[8]i32 {
