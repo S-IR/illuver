@@ -26,8 +26,6 @@ PLAYER_SIZE: f32 : 1.83
 Camera :: struct {
 	pos:              [3]f32,
 	front:            [3]f32,
-	up:               [3]f32,
-	right:            [3]f32,
 	yaw:              f32,
 	pitch:            f32,
 	movementSpeed:    f32,
@@ -65,7 +63,8 @@ camera_process_keyboard_movement :: proc(c: ^Camera, below: f32) {
 
 	movementVector: [3]f32 = {}
 	normalizedFront := linalg.normalize([3]f32{c.front.x, 0, c.front.z})
-	normalizedRight := linalg.normalize([3]f32{c.right.x, 0, c.right.z})
+	right := linalg.normalize(linalg.cross(WORLD_UP, c.front))
+	normalizedRight := linalg.normalize([3]f32{right.x, 0, right.z})
 
 	if keys[sdl.Scancode.W] != false {
 		movementVector += normalizedFront
@@ -116,7 +115,7 @@ Camera_process_mouse_movement :: proc(
 	mouseX, mouseY: f32,
 	screenW, screenH: u32,
 ) {
-	xOffset := received_xOffset * c.mouseSensitivity
+	xOffset := -received_xOffset * c.mouseSensitivity
 	yOffset := -received_yOffset * c.mouseSensitivity
 
 	EDGE_ZONE :: f32(0.02)
@@ -124,9 +123,9 @@ Camera_process_mouse_movement :: proc(
 	sh := f32(screenH)
 	EDGE_OFFSET :: 500
 	if mouseX < sw * EDGE_ZONE {
-		c.yaw -= EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
-	} else if mouseX > sw * (1 - EDGE_ZONE) {
 		c.yaw += EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
+	} else if mouseX > sw * (1 - EDGE_ZONE) {
+		c.yaw -= EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
 	}
 	if mouseY < sh * EDGE_ZONE {
 		c.pitch += EDGE_OFFSET * c.mouseSensitivity * f32(gs.dt)
@@ -140,24 +139,14 @@ Camera_process_mouse_movement :: proc(
 	Camera_rotate(c)
 }
 Camera_view_proj :: proc(c: Camera) -> (view, proj: matrix[4, 4]f32) {
-	// fmt.println("c.front", c.front)
-	// fmt.println("c.up", c.up)
-	// fmt.println("c.right", c.right)
-	// fmt.println("c.pos", c.pos)
-
-	view = linalg.matrix4_look_at_f32(c.pos, c.pos + c.front, c.up, true)
-
-	proj = linalg.matrix4_perspective_f32(
+	view = camera_view(c.pos, c.front)
+	proj = camera_proj(
 		c.fov,
 		f32(gs.screenWidth) / f32(gs.screenHeight),
 		f32(gs.nearPlane),
 		f32(gs.farPlane),
-		true,
 	)
-	// proj[1][1] *= -1
-
 	return view, proj
-
 }
 
 @(private)
@@ -166,9 +155,7 @@ Camera_rotate :: proc(c: ^Camera) {
 	for coord in c.front {
 		assert(!math.is_nan(coord))
 	}
-	for coord in c.right {
-		assert(!math.is_nan(coord))
-	}
+
 
 	assert(!(math.is_nan(c.front.x) || math.is_nan(c.pitch)), "Invalid camera rotation")
 
@@ -176,8 +163,6 @@ Camera_rotate :: proc(c: ^Camera) {
 	c.front.y = math.sin(c.pitch * linalg.RAD_PER_DEG)
 	c.front.z = math.sin(c.yaw * linalg.RAD_PER_DEG) * math.cos(c.pitch * linalg.RAD_PER_DEG)
 	c.front = linalg.normalize(c.front)
-	c.right = linalg.normalize(linalg.cross(c.front, WORLD_UP))
-	c.up = linalg.normalize(linalg.cross(c.right, c.front))
 }
 
 // frustum_from_camera :: proc(c: ^Camera) -> [6]Plane {

@@ -4,3 +4,6 @@
 [submodule "modules/tracy"]
 	path = modules/tracy
 	url = https://github.com/oskarnp/odin-tracy
+[submodule "modules/steamworks"]
+	path = modules/steamworks
+	url = https://github.com/jakubtomsu/odin-steamworks

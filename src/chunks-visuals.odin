@@ -286,7 +286,7 @@ chunk_init :: proc(chunk: ^Chunk, pos: [3]i32, state: ^ChunkWorkerState) {
 
 	// isCrystalblooomArr := [VERTS_PER_X_DIR * VERTS_PER_Z_DIR]bool{}
 	if !gottenDataFromIrrf {
-		when !DEBUG_MODE_IGNORE_SAVE do defer irrf_init_chunk(
+		when !DEBUG_MODE_IGNORE_SAVE do defer irrf_set_chunk(
 			chunk.pos,
 			&chunk.points,
 			&chunk.heightMap,

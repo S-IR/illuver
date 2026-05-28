@@ -116,7 +116,7 @@ IrrfChunkHeader :: [max(u8)]struct {
 	realPointType: u16,
 	total:         uint,
 }
-irrf_init_chunk :: proc(
+irrf_set_chunk :: proc(
 	pos: [3]i32,
 	points: ^[MAX_POINTS]u16,
 	heightmap: ^[CHUNK_HEIGHTMAP_SIZE]i32,
@@ -198,6 +198,7 @@ irrf_init_chunk :: proc(
 
 	irrf_mark_dirty(irrfPos)
 }
+
 irrf_get_chunk :: proc(
 	pos: [3]i32,
 	points: ^[MAX_POINTS]u16,
@@ -205,11 +206,8 @@ irrf_get_chunk :: proc(
 ) -> (
 	wasInCache: bool,
 ) {
+	assert_valid_chunk_pos(pos)
 	// tracy.Zone()
-
-	assert(pos.x % CHUNK_STRIDE_XZ == 0)
-	assert(pos.y % CHUNK_STRIDE_Y == 0)
-	assert(pos.z % CHUNK_STRIDE_XZ == 0)
 
 
 	irrfFile: ^InMemoryIRRF

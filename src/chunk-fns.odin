@@ -140,6 +140,12 @@ MAX_POINTS_INT :: int(MAX_POINTS)
 MAX_INDICES :: CUBES_PER_X_DIR * CUBES_PER_Y_DIR * CUBES_PER_Z_DIR * 36
 MAX_COLORS :: MAX_INDICES
 INDEX_TYPE_USED_IN_CHUNKS :: u32
+assert_valid_chunk_pos :: proc(pos: [3]i32) {
+	assert(pos.x % CHUNK_STRIDE_XZ == 0)
+	assert(pos.y % CHUNK_STRIDE_Y == 0)
+	assert(pos.z % CHUNK_STRIDE_XZ == 0)
+
+}
 chunk_set_point :: proc(worldPos: [3]f32, newType: PointType) -> (changed: bool, prev: u16) {
 
 	worldPosI32 := linalg.to_i32(linalg.round(worldPos))
@@ -171,9 +177,13 @@ chunks_frame_update :: proc(c: ^camera.Camera) {
 
 	sync.wait(&chunkWorkersWG)
 	flush_irrf_dirty_queue()
-	chunks_shift_per_player_movement(c)
+	chunks_shift_per_player_movement(c, renderedChunks[:])
 }
-chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
+chunks_shift_per_player_movement :: proc(
+	c: ^camera.Camera,
+	chunks: []^Chunk,
+	on_init: proc(_: ^Chunk, _: [3]i32) = chunk_init_add_thread,
+) {
 	tracy.Zone()
 	half := [3]i32 {
 		CHUNKS_PER_XZ_DIRECTION / 2,
@@ -187,7 +197,7 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			c.pos / [3]f32{f32(CHUNK_STRIDE_XZ), f32(CHUNK_STRIDE_Y), f32(CHUNK_STRIDE_XZ)},
 		),
 	)
-	xyzPrev := rc(half).pos / stride
+	xyzPrev := chunks[rc_idx(half.x, half.y, half.z)].pos / stride
 
 	if xyzCurr == xyzPrev do return
 
@@ -197,7 +207,7 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			X,
 			Y,
 			Z,
-		}, delta: i32, xyzCurr, half: [3]i32) {
+		}, delta: i32, xyzCurr, half: [3]i32, chunks: []^Chunk, on_init: proc(_: ^Chunk, _: [3]i32)) {
 		if delta == 0 do return
 		count := abs((delta))
 		isPositiveShift := delta > 0
@@ -218,14 +228,14 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 				for p in 0 ..< count {
 					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							recycled[idx(p, y, z)] = rc(p, y, z)
+							recycled[idx(p, y, z)] = chunks[rc_idx(p, y, z)]
 						}
 					}
 				}
 				for x in 0 ..< CHUNKS_PER_XZ_DIRECTION - count {
 					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(x, y, z, rc(x + count, y, z))
+							chunks[rc_idx(x, y, z)] = chunks[rc_idx(x + count, y, z)]
 						}
 					}
 				}
@@ -233,11 +243,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					nx := CHUNKS_PER_XZ_DIRECTION - 1 - p
 					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(nx, y, z, recycled[idx(p, y, z)])
+							chunks[rc_idx(nx, y, z)] = recycled[idx(p, y, z)]
 							posChunkCoord := xyzCurr + [3]i32{i32(nx), i32(y), i32(z)} - half
 							pos :=
 								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
-							chunk_init_add_thread(rc(nx, y, z), pos)
+							on_init(chunks[rc_idx(nx, y, z)], pos)
 						}
 					}
 				}
@@ -246,14 +256,14 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					sx := CHUNKS_PER_XZ_DIRECTION - 1 - p
 					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							recycled[idx(p, y, z)] = rc(sx, y, z)
+							recycled[idx(p, y, z)] = chunks[rc_idx(sx, y, z)]
 						}
 					}
 				}
 				for x := CHUNKS_PER_XZ_DIRECTION - 1; x >= count; x -= 1 {
 					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(x, y, z, rc(x - count, y, z))
+							chunks[rc_idx(x, y, z)] = chunks[rc_idx(x - count, y, z)]
 						}
 					}
 				}
@@ -261,11 +271,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					nx := p
 					for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(nx, y, z, recycled[idx(p, y, z)])
+							chunks[rc_idx(nx, y, z)] = recycled[idx(p, y, z)]
 							posChunkCoord := xyzCurr + [3]i32{i32(nx), i32(y), i32(z)} - half
 							pos :=
 								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
-							chunk_init_add_thread(rc(nx, y, z), pos)
+							on_init(chunks[rc_idx(nx, y, z)], pos)
 						}
 					}
 				}
@@ -289,14 +299,14 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 				for p in 0 ..< count {
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							recycled[idx(p, x, z)] = rc(x, p, z)
+							recycled[idx(p, x, z)] = chunks[rc_idx(x, p, z)]
 						}
 					}
 				}
 				for y in 0 ..< CHUNKS_PER_Y_DIRECTION - count {
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(x, y, z, rc(x, y + count, z))
+							chunks[rc_idx(x, y, z)] = chunks[rc_idx(x, y + count, z)]
 						}
 					}
 				}
@@ -304,11 +314,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					ny := CHUNKS_PER_Y_DIRECTION - 1 - p
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(x, ny, z, recycled[idx(p, x, z)])
+							chunks[rc_idx(x, ny, z)] = recycled[idx(p, x, z)]
 							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(ny), i32(z)} - half
 							pos :=
 								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
-							chunk_init_add_thread(rc(x, ny, z), pos)
+							on_init(chunks[rc_idx(x, ny, z)], pos)
 						}
 					}
 				}
@@ -317,14 +327,14 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					sy := CHUNKS_PER_Y_DIRECTION - 1 - p
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							recycled[idx(p, x, z)] = rc(x, sy, z)
+							recycled[idx(p, x, z)] = chunks[rc_idx(x, sy, z)]
 						}
 					}
 				}
 				for y := CHUNKS_PER_Y_DIRECTION - 1; y >= count; y -= 1 {
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(x, y, z, rc(x, y - count, z))
+							chunks[rc_idx(x, y, z)] = chunks[rc_idx(x, y - count, z)]
 						}
 					}
 				}
@@ -332,11 +342,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					ny := p
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for z in 0 ..< CHUNKS_PER_XZ_DIRECTION {
-							rc_set(x, ny, z, recycled[idx(p, x, z)])
+							chunks[rc_idx(x, ny, z)] = recycled[idx(p, x, z)]
 							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(ny), i32(z)} - half
 							pos :=
 								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
-							chunk_init_add_thread(rc(x, ny, z), pos)
+							on_init(chunks[rc_idx(x, ny, z)], pos)
 						}
 					}
 				}
@@ -360,14 +370,14 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 				for p in 0 ..< count {
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
-							recycled[idx(p, x, y)] = rc(x, y, p)
+							recycled[idx(p, x, y)] = chunks[rc_idx(x, y, p)]
 						}
 					}
 				}
 				for z in 0 ..< CHUNKS_PER_XZ_DIRECTION - count {
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
-							rc_set(x, y, z, rc(x, y, z + count))
+							chunks[rc_idx(x, y, z)] = chunks[rc_idx(x, y, z + count)]
 						}
 					}
 				}
@@ -375,11 +385,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					nz := CHUNKS_PER_XZ_DIRECTION - 1 - p
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
-							rc_set(x, y, nz, recycled[idx(p, x, y)])
+							chunks[rc_idx(x, y, nz)] = recycled[idx(p, x, y)]
 							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(y), i32(nz)} - half
 							pos :=
 								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
-							chunk_init_add_thread(rc(x, y, nz), pos)
+							on_init(chunks[rc_idx(x, y, nz)], pos)
 						}
 					}
 				}
@@ -388,14 +398,14 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					sz := CHUNKS_PER_XZ_DIRECTION - 1 - p
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
-							recycled[idx(p, x, y)] = rc(x, y, sz)
+							recycled[idx(p, x, y)] = chunks[rc_idx(x, y, sz)]
 						}
 					}
 				}
 				for z := CHUNKS_PER_XZ_DIRECTION - 1; z >= count; z -= 1 {
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
-							rc_set(x, y, z, rc(x, y, z - count))
+							chunks[rc_idx(x, y, z)] = chunks[rc_idx(x, y, z - count)]
 						}
 					}
 				}
@@ -403,11 +413,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 					nz := p
 					for x in 0 ..< CHUNKS_PER_XZ_DIRECTION {
 						for y in 0 ..< CHUNKS_PER_Y_DIRECTION {
-							rc_set(x, y, nz, recycled[idx(p, x, y)])
+							chunks[rc_idx(x, y, nz)] = recycled[idx(p, x, y)]
 							posChunkCoord := xyzCurr + [3]i32{i32(x), i32(y), i32(nz)} - half
 							pos :=
 								posChunkCoord * {CHUNK_STRIDE_XZ, CHUNK_STRIDE_Y, CHUNK_STRIDE_XZ}
-							chunk_init_add_thread(rc(x, y, nz), pos)
+							on_init(chunks[rc_idx(x, y, nz)], pos)
 						}
 					}
 				}
@@ -415,11 +425,11 @@ chunks_shift_per_player_movement :: proc(c: ^camera.Camera) {
 			return
 		}
 	}
-	if delta.x != 0 {shift_chunks(.X, delta.x, xyzCurr, half)}
-	if delta.y != 0 {shift_chunks(.Y, delta.y, xyzCurr, half)}
-	if delta.z != 0 {shift_chunks(.Z, delta.z, xyzCurr, half)}
+	if delta.x != 0 {shift_chunks(.X, delta.x, xyzCurr, half, chunks, on_init)}
+	if delta.y != 0 {shift_chunks(.Y, delta.y, xyzCurr, half, chunks, on_init)}
+	if delta.z != 0 {shift_chunks(.Z, delta.z, xyzCurr, half, chunks, on_init)}
 
-	assert(chunk_contains_point(rc(half).pos, camera.curr.pos))
+	assert(chunk_contains_point(chunks[rc_idx(half.x, half.y, half.z)].pos, c.pos))
 }
 
 

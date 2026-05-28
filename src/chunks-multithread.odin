@@ -134,7 +134,7 @@ chunk_worker_thread :: proc(t: ^thread.Thread) {
 					chunk.heightMap[heightMapIdx] = chunk.pos.y + v.y
 				}
 			}
-			irrf_init_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
+			irrf_set_chunk(chunk.pos, &chunk.points, &chunk.heightMap)
 			chunk_create_gpu_geometry(chunk, state, v.frameIndex)
 		}
 		sync.unlock(&chunk.mutex)
