@@ -289,7 +289,7 @@ sun_init :: proc() -> (d: SunRenderData) {
 				addressModeU = .CLAMP_TO_BORDER,
 				addressModeV = .CLAMP_TO_BORDER,
 				addressModeW = .CLAMP_TO_BORDER,
-				borderColor = .FLOAT_OPAQUE_WHITE,
+				borderColor = .FLOAT_OPAQUE_BLACK,
 				compareEnable = true,
 				compareOp = .LESS_OR_EQUAL,
 			},
@@ -482,22 +482,32 @@ sun_ubo_update :: proc(ubo: ^SunUBO, time: f64, cameraPos: [3]f32) {
 		cameraPos.z + 100,
 		0,
 	}
-	angleNormalized := math.clamp(math.sin_f32(angle), f32(0), f32(1))
 
-	ubo.color = {
-		1.0,
-		0.7 + 0.3 * angleNormalized,
-		0.4 + 0.5 * angleNormalized,
-		1.5 * angleNormalized + 0.05,
-	}
 	ubo.lightVP = compute_cascade_light_vps(ubo.worldPos.xyz, cameraPos)
 	ubo.cascadeSplits = CSM_SPLIT_DISTANCES
-	gs.clearColor = {
-		angleNormalized * 0.25,
-		angleNormalized * 0.40,
-		0.08 + angleNormalized * 0.52,
-		1,
-	}
+
+	sunHeight := math.sin_f32(angle)
+	dayT := math.clamp(sunHeight, 0, 1)
+	horizonT := 1.0 - math.abs(sunHeight)
+
+	night :: [3]f32{0.01, 0.02, 0.02}
+	day :: [3]f32{0.20, 0.45, 0.72}
+	horizon :: [3]f32{0.55, 0.22, 0.08}
+
+	sky := night + (day - night) * dayT
+	sky = sky + (horizon - sky) * horizonT * horizonT
+	gs.clearColor = {sky.x, sky.y, sky.z, 1}
+
+
+	nightLight :: [3]f32{0.05, 0.07, 0.15}
+	dayLight :: [3]f32{1.00, 0.92, 0.75}
+	horizonLight :: [3]f32{1.00, 0.50, 0.20}
+
+	lightColor := nightLight + (dayLight - nightLight) * dayT
+	lightColor = lightColor + (horizonLight - lightColor) * horizonT * horizonT
+
+	lightIntensity := 0.1 + 1.4 * dayT + 0.7 * horizonT * horizonT
+	ubo.color = {lightColor.x, lightColor.y, lightColor.z, lightIntensity}
 
 
 }

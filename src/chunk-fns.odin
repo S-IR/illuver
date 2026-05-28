@@ -434,6 +434,8 @@ chunks_shift_per_player_movement :: proc(
 
 
 is_chunk_in_camera_frustrum :: proc(pos: [3]i32, c: camera.Camera) -> bool {
+	tracy.Zone()
+
 	min := linalg.to_f32(pos)
 	max :=
 		min + linalg.to_f32([3]i32{CHUNK_STRIDE_XZ + 1, CHUNK_STRIDE_Y + 1, CHUNK_STRIDE_XZ + 1})
@@ -465,6 +467,8 @@ is_chunk_in_camera_frustrum :: proc(pos: [3]i32, c: camera.Camera) -> bool {
 }
 
 get_point_at_world_pos :: proc(worldGridPos: [3]f32, currCamera: camera.Camera) -> u16 {
+	tracy.Zone()
+
 	when ODIN_DEBUG {
 		worldPosRounded := linalg.round(worldGridPos)
 		assert(worldPosRounded == worldGridPos)

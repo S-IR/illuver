@@ -66,7 +66,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
 
   float3 surfaceColor = input.color.xyz;
 
-  float sunAmbientStr = 0.22;
+  float sunAmbientStr = 0.10;
   float3 ambient = sunAmbientStr * surfaceColor * float3(0.75, 0.88, 1.0);
 
   // diffuse
@@ -96,9 +96,12 @@ float4 fragmentMain(VertexOutput input) : SV_Target0 {
   }
   float3 specular = spec * 1.0 * sunColor.xyz * attenuation;
 
-  float3 hdrColor = ambient + shadow * (diffuse + specular);
-  // ACES filmic tonemapping
-  float3 x = hdrColor;
-  float3 mapped = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-  return float4(mapped, input.color.w);
+  float sunFactor = saturate(sunWorldPos.y / 100.0);
+  float3 hdrColor = ambient + sunFactor * shadow * (diffuse + specular);
+
+  return float4(hdrColor, input.color.w);
+
+  // float3 x = hdrColor;
+  // float3 mapped = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+  // return float4(mapped, input.color.w);
 }

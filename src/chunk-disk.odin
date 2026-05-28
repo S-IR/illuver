@@ -312,6 +312,8 @@ irrf_mark_dirty :: proc(irrfPos: [3]i32) {
 }
 
 flush_irrf_dirty_queue :: proc() {
+	tracy.Zone()
+
 	for i in 0 ..< small_array.len(irrfDirtyQueue) {
 		irrfPos := small_array.get(irrfDirtyQueue, i)
 		sync.shared_lock(&IRRFCacheMutex)

@@ -1,4 +1,5 @@
 package main
+import "../modules/tracy"
 import "../modules/vma"
 import "core:fmt"
 import "core:mem"
@@ -6,6 +7,7 @@ import "core:sync"
 import "gs"
 import vk "vendor:vulkan"
 import "vkh"
+
 ComputeMeshUniforms :: struct {
 	chunkMin: [4]i32, // pad to vec4
 	seed:     u32,
@@ -14,6 +16,8 @@ chunkGeometryCalcPipeline: vkh.PipelineData
 
 
 chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
+	tracy.Zone()
+
 	bindings := [5]vk.DescriptorSetLayoutBinding {
 		{
 			binding = 0,
@@ -104,6 +108,7 @@ chunk_geometry_calc_pipeline_init :: proc() -> (p: vkh.PipelineData) {
 
 
 chunk_geometry_calc_buffers_create :: proc(chunk: ^Chunk) {
+	tracy.Zone()
 
 	if chunk.buffers.compute.pointsInput.buffer == {} {
 
@@ -202,6 +207,8 @@ chunk_geometry_calculate :: proc(
 	state: ^ChunkWorkerState,
 	pipeline: vkh.PipelineData,
 ) {
+	tracy.Zone()
+
 	if chunk.points == {} do return
 	vk.WaitForFences(vkh.device, 1, &state.computeFence, true, max(u64))
 	vk.ResetFences(vkh.device, 1, &state.computeFence)

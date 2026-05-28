@@ -67,6 +67,8 @@ WorldArena := vmem.Arena{}
 WorldAllocator := mem.Allocator{}
 
 chunks_init :: proc(c: ^camera.Camera) {
+	tracy.Zone()
+
 	chunkShutdown = false
 	centerChunkCoord := linalg.to_i32(
 		linalg.floor(
